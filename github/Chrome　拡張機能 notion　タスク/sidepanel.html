@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notion Task Manager</title>
+  <link href="styles.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+</head>
+<body>
+  <!-- オーディオ要素 -->
+  <audio id="clickSound" src="ClickSound/Click.mp3"></audio>
+  <audio id="allTasksDoneSound" src="ClickSound/AllTasksDone.mp3"></audio>
+  
+ <!-- お祝いアニメーション用の要素 -->
+ <div class="celebration-container" id="celebrationContainer"></div>
+ <div class="celebration-message" id="celebrationMessage">
+   🎉 Congratulations! 🎉<br>
+   本日のタスクは全て完了しました！
+ </div>
+
+  <div class="container">
+    <header class="header">
+      <h1>タスク管理</h1>
+      <div class="header-buttons">
+        <button id="refreshBtn" class="refresh-btn" title="更新">
+          <i class="ri-refresh-line"></i>
+        </button>
+        <button id="addTaskBtn" class="add-task-btn" title="タスクを追加">
+          <i class="ri-add-line"></i>
+        </button>
+        <button id="menuToggle" class="menu-toggle">
+          <i class="ri-menu-line"></i>
+        </button>
+      </div>
+    </header>
+
+    <div class="search-container">
+      <div class="search-box">
+        <input type="text" id="searchInput" placeholder="タスクを検索...">
+        <button id="clearSearchBtn" class="clear-search-btn hidden">
+          <i class="ri-close-circle-line"></i>
+        </button>
+        <button id="searchBtn" class="search-btn">
+          <i class="ri-search-line"></i>
+        </button>
+      </div>
+    </div>
+
+
+    <!-- タブナビゲーション -->
+    <div class="tabs-container">
+      <div class="tabs">
+        <button id="activeTasksTab" class="tab-btn active">未完了タスク</button>
+        <button id="completedTasksTab" class="tab-btn">完了済みタスク</button>
+      </div>
+    </div>
+
+    <!-- タスクセクション - アクティブタスク -->
+    <div id="activeTasksSection" class="tab-content active">
+      <div class="task-sections">
+        <div class="task-section">
+          <h2>過去のタスク</h2>
+          <div id="pastTaskList" class="task-list"></div>
+        </div>
+
+        <div class="task-section">
+          <h2>今日のタスク</h2>
+          <div id="todayTaskList" class="task-list"></div>
+        </div>
+
+        <div class="task-section">
+          <h2>未来のタスク</h2>
+          <div id="futureTaskList" class="task-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- タスクセクション - 完了済みタスク -->
+    <div id="completedTasksSection" class="tab-content">
+      <div class="completed-tasks-header">
+        <h2>完了したタスク</h2>
+      </div>
+      <div id="completedTaskList" class="task-list"></div>
+    </div>
+    
+    <!-- タスク追加モーダル -->
+    <div id="addTaskModal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>新規タスクの追加</h2>
+          <button class="modal-close">×</button>
+        </div>
+        <form id="newTaskForm" class="new-task-form">
+        <div class="form-group">
+          <label for="newTaskName">タスク名</label>
+          <input type="text" id="newTaskName" required class="modal-input">
+        </div>
+        
+        <div class="form-group">
+          <label for="newActionDate">対応予定日</label>
+          <input type="date" id="newActionDate" required class="modal-input">
+        </div>
+        
+        <div class="form-row">
+          <div class="form-group">
+            <label for="newActionStartTime">開始時間</label>
+            <input type="time" id="newActionStartTime" required class="modal-input">
+          </div>
+          <div class="form-group">
+            <label for="newActionEndTime">終了時間</label>
+            <input type="time" id="newActionEndTime" required class="modal-input">
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label for="newNotes">備考欄</label>
+          <textarea id="newNotes" class="modal-textarea"></textarea>
+        </div>
+        
+        <div class="modal-actions">
+          <button type="reset" class="cancel-btn">クリア</button>
+          <button type="submit" class="submit-btn">保存</button>
+        </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="menuPanel" class="menu-panel">
+    <div class="menu-header">
+      <h2>メニュー</h2>
+      <button id="menuClose" class="menu-close">×</button>
+    </div>
+    
+    <div class="menu-section">
+      <h3>検索</h3>
+      <div class="search-options">
+        <label>
+          <input type="checkbox" id="searchInTitle" checked> タスク名
+        </label>
+        <label>
+          <input type="checkbox" id="searchInNotes"> 備考
+        </label>
+      </div>
+    </div>
+    
+    <div class="menu-section">
+      <h3>フィルター</h3>
+      <div class="filters">
+        <select id="statusFilter" class="filter-select">
+          <option value="">ステータス: すべて</option>
+          <option value="Not Started">未着手</option>
+          <option value="Next Up">次に対応</option>
+          <option value="In Progress">対応中</option>
+          <option value="Done">完了</option>
+        </select>
+        
+        <select id="priorityFilter" class="filter-select">
+          <option value="">優先度: すべて</option>
+          <option value="高">高</option>
+          <option value="中">中</option>
+          <option value="低">低</option>
+        </select>
+        
+        <div class="sort-controls">
+          <select id="sortField" class="sort-select">
+            <option value="priority">優先度</option>
+            <option value="dueDate">期限日</option>
+            <option value="status">ステータス</option>
+            <option value="createdTime">作成日</option>
+          </select>
+          <button id="sortDirection" class="sort-direction-btn" data-direction="desc">
+            <i class="ri-arrow-down-line"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="menuOverlay" class="menu-overlay"></div>
+
+  <!-- 編集モーダル -->
+  <div id="editTaskModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>タスクの編集</h2>
+        <button class="modal-close">×</button>
+      </div>
+      <form id="editTaskForm">
+        <input type="hidden" id="editTaskId">
+        <div class="form-group">
+          <label for="editTaskName">タスク名</label>
+          <input type="text" id="editTaskName" required class="modal-input">
+        </div>
+        
+        
+        <div class="form-group">
+          <label for="editNotes">備考</label>
+          <textarea id="editNotes" class="modal-textarea"></textarea>
+        </div>
+        
+        <div class="modal-actions">
+          <button type="button" class="cancel-btn">キャンセル</button>
+          <button type="submit" class="submit-btn">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

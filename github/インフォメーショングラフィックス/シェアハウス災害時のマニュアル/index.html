@@ -1,0 +1,1391 @@
+
+  <!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ほっとシェアハウス 地震災害対応マニュアル</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', sans-serif;
+      line-height: 1.6;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 24px;
+      box-shadow: 0 32px 64px rgba(0,0,0,0.12);
+      overflow: hidden;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      color: white;
+      padding: 40px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .header::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+      animation: pulse 4s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 0.7; }
+      50% { transform: scale(1.1); opacity: 0.9; }
+    }
+
+    .header-content {
+      position: relative;
+      z-index: 2;
+    }
+
+    .header-icon {
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 20px;
+      background: linear-gradient(135deg, #ff6b6b, #feca57);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 32px rgba(255, 107, 107, 0.3);
+    }
+
+    .header h1 {
+      font-size: 2.8em;
+      margin-bottom: 15px;
+      font-weight: 800;
+      background: linear-gradient(135deg, #fff, #e3f2fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* モバイル表示時のタイトルサイズ調整 */
+    @media (max-width: 768px) {
+      .header h1 {
+        font-size: 0.9em;
+        line-height: 1.3;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .header h1 {
+        font-size: 0.6em;
+        line-height: 1.3;
+      }
+    }
+
+    @media (max-width: 375px) {
+      .header h1 {
+        font-size: 0.5em;
+        line-height: 1.3;
+      }
+    }
+
+    @media (max-width: 320px) {
+      .header h1 {
+        font-size: 0.45em;
+        line-height: 1.3;
+      }
+    }
+
+    .header-info {
+      background: rgba(255,255,255,0.15);
+      padding: 20px;
+      border-radius: 16px;
+      margin-top: 25px;
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    .main-content {
+      padding: 50px;
+    }
+
+    .emergency-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 30px;
+      margin-bottom: 50px;
+    }
+
+    .role-card {
+      background: white;
+      border-radius: 20px;
+      padding: 30px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.08);
+      border: 1px solid rgba(0,0,0,0.05);
+      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .role-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, var(--role-color), var(--role-color-light));
+    }
+
+    .role-card.staff {
+      --role-color: #ff6b6b;
+      --role-color-light: #ff8e8e;
+    }
+
+    .role-card.supervisor {
+      --role-color: #4ecdc4;
+      --role-color-light: #7ee3db;
+    }
+
+    .role-card.manager {
+      --role-color: #45b7d1;
+      --role-color-light: #7ac7dd;
+    }
+
+    .role-card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 24px 60px rgba(0,0,0,0.15);
+    }
+
+    .role-title {
+      display: flex;
+      align-items: center;
+      font-size: 1.5em;
+      font-weight: 700;
+      margin-bottom: 20px;
+      color: #2c3e50;
+    }
+
+    .role-icon {
+      width: 48px;
+      height: 48px;
+      margin-right: 15px;
+      padding: 10px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--role-color), var(--role-color-light));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+    }
+
+    .action-steps {
+      list-style: none;
+      counter-reset: step-counter;
+    }
+
+    .action-steps li {
+      background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+      margin: 12px 0;
+      padding: 18px 20px;
+      border-radius: 12px;
+      position: relative;
+      transition: all 0.3s ease;
+    }
+
+    .action-steps li:hover {
+      transform: translateX(4px);
+      background: linear-gradient(135deg, #e3f2fd, #bbdefb);
+    }
+
+    .action-steps li::before {
+      content: counter(step-counter);
+      counter-increment: step-counter;
+      background: linear-gradient(135deg, var(--role-color), var(--role-color-light));
+      color: white;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 0.9em;
+      position: absolute;
+      left: -14px;
+      top: 50%;
+      transform: translateY(-50%);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    .section {
+      margin: 50px 0;
+      background: white;
+      border-radius: 20px;
+      padding: 40px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.08);
+      border: 1px solid rgba(0,0,0,0.05);
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      font-size: 2em;
+      font-weight: 800;
+      margin-bottom: 30px;
+      color: #2c3e50;
+      position: relative;
+    }
+
+    .section-title::after {
+      content: '';
+      position: absolute;
+      bottom: -8px;
+      left: 0;
+      width: 60px;
+      height: 4px;
+      background: linear-gradient(90deg, #667eea, #764ba2);
+      border-radius: 2px;
+    }
+
+    .section-icon {
+      width: 40px;
+      height: 40px;
+      margin-right: 15px;
+      padding: 8px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* カードレイアウト（全デバイス統一） */
+    .evacuation-table {
+      display: none; /* 全デバイスで表を非表示 */
+    }
+
+    .evacuation-cards {
+      display: block; /* 全デバイスでカード表示 */
+    }
+
+    .evacuation-card {
+      background: white;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      border: 1px solid rgba(0,0,0,0.05);
+      transition: all 0.3s ease;
+    }
+
+    .evacuation-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+    }
+
+    .evacuation-card-header {
+      padding: 16px 20px;
+      border-left: 4px solid;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .evacuation-card-body {
+      padding: 0 20px 16px 20px;
+    }
+
+    .evacuation-card.level-1 .evacuation-card-header {
+      background: linear-gradient(135deg, #d4edda, #c3e6cb);
+      border-left-color: #28a745;
+    }
+
+    .evacuation-card.level-2 .evacuation-card-header {
+      background: linear-gradient(135deg, #fff3cd, #ffeaa7);
+      border-left-color: #ffc107;
+    }
+
+    .evacuation-card.level-3 .evacuation-card-header {
+      background: linear-gradient(135deg, #f8d7da, #f5b7b1);
+      border-left-color: #dc3545;
+    }
+
+    .level-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .level-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-weight: bold;
+      color: white;
+      font-size: 0.85em;
+    }
+
+    .level-1 .level-badge { background: linear-gradient(135deg, #28a745, #20c997); }
+    .level-2 .level-badge { background: linear-gradient(135deg, #ffc107, #fd7e14); }
+    .level-3 .level-badge { background: linear-gradient(135deg, #dc3545, #e74c3c); }
+
+    .independence-level {
+      font-weight: 600;
+      font-size: 0.9em;
+      color: #2c3e50;
+    }
+
+    .user-count {
+      font-weight: bold;
+      font-size: 1.1em;
+      padding: 6px 12px;
+      border-radius: 15px;
+      background: rgba(255,255,255,0.8);
+    }
+
+    .level-1 .user-count { color: #28a745; }
+    .level-2 .user-count { color: #fd7e14; }
+    .level-3 .user-count { color: #dc3545; }
+
+    .support-description {
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: #2c3e50;
+      font-size: 0.95em;
+    }
+
+    .support-detail {
+      color: #666;
+      margin-bottom: 12px;
+      font-size: 0.9em;
+    }
+
+    /* ユーザーグリッド - デバイス別レスポンシブ */
+    .user-grid {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .user-card {
+      background: rgba(255,255,255,0.9);
+      padding: 8px 12px;
+      border-radius: 6px;
+      text-align: center;
+      font-weight: 500;
+      border: 1px solid rgba(0,0,0,0.08);
+      font-size: 0.85em;
+      transition: all 0.2s ease;
+    }
+
+    .user-card:hover {
+      background: rgba(255,255,255,1);
+      transform: translateY(-1px);
+    }
+
+    /* PC・大型タブレット（1024px以上）- 4列表示 */
+    @media (min-width: 1024px) {
+      .user-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+
+    /* タブレット（768px-1023px）- 3列表示 */
+    @media (min-width: 768px) and (max-width: 1023px) {
+      .user-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    .level-1 { 
+      background: linear-gradient(135deg, #d4edda, #c3e6cb); 
+      border-left: 6px solid #28a745; 
+    }
+    .level-2 { 
+      background: linear-gradient(135deg, #fff3cd, #ffeaa7); 
+      border-left: 6px solid #ffc107; 
+    }
+    .level-3 { 
+      background: linear-gradient(135deg, #f8d7da, #f5b7b1); 
+      border-left: 6px solid #dc3545; 
+    }
+
+    .level-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 16px;
+      border-radius: 25px;
+      font-weight: bold;
+      color: white;
+      margin-bottom: 12px;
+      font-size: 0.9em;
+    }
+
+    .level-1 .level-badge { background: linear-gradient(135deg, #28a745, #20c997); }
+    .level-2 .level-badge { background: linear-gradient(135deg, #ffc107, #fd7e14); }
+    .level-3 .level-badge { background: linear-gradient(135deg, #dc3545, #e74c3c); }
+
+    .evacuation-locations {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 25px;
+    }
+
+    .location-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      border-radius: 20px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.3s ease;
+    }
+
+    .location-card:hover {
+      transform: translateY(-5px);
+    }
+
+    .location-card::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -50%;
+      width: 100%;
+      height: 100%;
+      background: rgba(255,255,255,0.1);
+      transform: rotate(45deg);
+    }
+
+    .location-title {
+      font-size: 1.4em;
+      font-weight: 700;
+      margin: 15px 0 10px;
+    }
+
+    .location-icon {
+      width: 60px;
+      height: 60px;
+      margin: 0 auto 15px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(10px);
+    }
+
+    .supplies-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+
+    .supply-item {
+      background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+      padding: 20px;
+      border-radius: 16px;
+      border-left: 4px solid #28a745;
+      display: flex;
+      align-items: center;
+      transition: all 0.3s ease;
+    }
+
+    .supply-item:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+    }
+
+    .supply-icon {
+      width: 48px;
+      height: 48px;
+      margin-right: 15px;
+      background: linear-gradient(135deg, #28a745, #20c997);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+    }
+
+    .contact-network {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 15px;
+      margin-bottom: 25px;
+    }
+
+    .contact-card {
+      background: white;
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+      border: 1px solid rgba(0,0,0,0.05);
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+      min-width: 0;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .contact-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, var(--contact-color), var(--contact-color-light));
+    }
+
+    .contact-card.manager-contact {
+      --contact-color: #e74c3c;
+      --contact-color-light: #ec7063;
+    }
+
+    .contact-card.supervisor-contact {
+      --contact-color: #3498db;
+      --contact-color-light: #5dade2;
+    }
+
+    .contact-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 15px 35px rgba(0,0,0,0.15);
+    }
+
+    .contact-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .contact-role {
+      font-weight: 700;
+      font-size: 1em;
+      color: #2c3e50;
+    }
+
+    .contact-priority {
+      background: linear-gradient(135deg, var(--contact-color), var(--contact-color-light));
+      color: white;
+      padding: 3px 8px;
+      border-radius: 10px;
+      font-size: 0.75em;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .contact-info {
+      text-align: center;
+    }
+
+    .contact-name {
+      font-size: 1.1em;
+      font-weight: 700;
+      color: #2c3e50;
+      margin-bottom: 10px;
+      word-break: keep-all;
+    }
+
+    .contact-phone {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: linear-gradient(135deg, var(--contact-color), var(--contact-color-light));
+      color: white;
+      padding: 10px 16px;
+      border-radius: 20px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.9em;
+      transition: all 0.3s ease;
+      box-shadow: 0 3px 12px rgba(0,0,0,0.2);
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .contact-phone:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+      text-decoration: none;
+      color: white;
+    }
+
+    .contact-phone:active {
+      transform: translateY(0);
+    }
+
+    .phone-icon {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+    }
+
+    .contact-instructions {
+      background: linear-gradient(135deg, #fff3cd, #ffeaa7);
+      padding: 20px;
+      border-radius: 12px;
+      border-left: 4px solid #ffc107;
+      line-height: 1.6;
+    }
+
+    .contact-link {
+      display: inline-flex;
+      align-items: center;
+      background: white;
+      color: #333;
+      padding: 18px 35px;
+      border-radius: 30px;
+      text-decoration: none;
+      font-weight: bold;
+      margin-top: 20px;
+      box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+      transition: all 0.3s ease;
+    }
+
+    .contact-link:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 35px rgba(0,0,0,0.2);
+    }
+
+    .footer {
+      background: linear-gradient(135deg, #2c3e50, #34495e);
+      color: white;
+      padding: 30px;
+      text-align: center;
+      font-size: 0.95em;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 768px) {
+      .emergency-actions {
+        grid-template-columns: 1fr;
+      }
+      
+      .header h1 {
+        font-size: 2.2em;
+      }
+      
+      .main-content {
+        padding: 30px;
+      }
+
+      .supplies-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .evacuation-locations {
+        grid-template-columns: 1fr;
+      }
+
+      /* モバイル（768px以下）- 2列表示 */
+      .user-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    /* 小型モバイル（480px以下）- 1列表示 */
+    @media (max-width: 480px) {
+      .user-grid {
+        grid-template-columns: 1fr;
+      }
+      
+      .evacuation-card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+      }
+      
+      .level-info {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+      }
+
+      /* 連絡網の小型モバイル対応 */
+      .main-content {
+        padding: 15px;
+      }
+
+      .contact-card {
+        padding: 10px;
+      }
+
+      .contact-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+      }
+
+      .contact-name {
+        font-size: 0.95em;
+        margin-bottom: 6px;
+      }
+
+      .contact-phone {
+        font-size: 0.8em;
+        padding: 6px 10px;
+        gap: 3px;
+      }
+
+      .phone-icon {
+        width: 12px;
+        height: 12px;
+      }
+
+      .contact-instructions {
+        padding: 10px;
+        font-size: 0.8em;
+      }
+
+      .family-contact-info {
+        padding: 15px;
+      }
+    }
+
+    /* SVG Icons */
+    .icon {
+      width: 100%;
+      height: 100%;
+      fill: currentColor;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="header-content">
+        <div class="header-icon">
+          <svg class="icon" viewBox="0 0 24 24">
+            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3ZM12 9v4m0 4h.01"/>
+          </svg>
+        </div>
+        <h1>ほっとシェアハウス<br>地震災害対応マニュアル</h1>
+        <div class="header-info">
+          <strong>対象利用者：17名</strong> ｜ <strong>責任者：1名</strong> ｜ <strong>管理者：1名</strong><br>
+          <strong>更新日：2025年6月1日</strong>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <section class="emergency-actions">
+        <div class="role-card staff">
+          <div class="role-title">
+            <div class="role-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+              </svg>
+            </div>
+            勤務者の初動対応
+          </div>
+          <ol class="action-steps">
+            <li><strong>身の安全確保</strong><br>まず自分の安全を確保</li>
+            <li><strong>火元確認</strong><br>火災の危険がないか確認</li>
+            <li><strong>利用者の安否確認</strong><br>怪我や体調不良者の確認</li>
+            <li><strong>建物・設備の安全確認</strong><br>構造的損傷やガス漏れなどの確認</li>
+            <li><strong>責任者への報告・指示受け</strong><br>状況を報告し、避難等の指示を受ける</li>
+          </ol>
+        </div>
+
+        <div class="role-card supervisor">
+          <div class="role-title">
+            <div class="role-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <polyline points="16,11 18,13 22,9"/>
+              </svg>
+            </div>
+            責任者の役割
+          </div>
+          <ol class="action-steps">
+            <li><strong>管理者との連携</strong><br>状況を管理者に報告</li>
+            <li><strong>避難判断</strong><br>建物の安全性を評価し避難の必要性を判断</li>
+            <li><strong>避難指示・従業員への指導</strong><br>必要に応じて利用者に避難指示を出し、従業員が適切に避難支援できるよう指導する</li>
+          </ol>
+        </div>
+
+        <div class="role-card manager">
+          <div class="role-title">
+            <div class="role-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </div>
+            管理者の役割
+          </div>
+          <ol class="action-steps">
+            <li><strong>連絡手段の確保</strong><br>通信機器の動作確認</li>
+            <li><strong>状況把握</strong><br>現場からの報告を整理</li>
+            <li><strong>現地出動</strong><br>必要時は現地に向かう</li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">
+          <div class="section-icon">
+            <svg class="icon" viewBox="0 0 24 24">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          社内緊急連絡網
+        </h2>
+        <div class="contact-network">
+          <div class="contact-card manager-contact">
+            <div class="contact-header">
+              <div class="contact-role">管理者</div>
+              <div class="contact-priority">最優先</div>
+            </div>
+            <div class="family-contact-info">
+              <div class="contact-name">早崎 友音</div>
+              <a href="tel:090-6507-0480" class="contact-phone">
+                <svg class="phone-icon" viewBox="0 0 24 24">
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                </svg>
+                090-6507-0480
+              </a>
+            </div>
+          </div>
+
+          <div class="contact-card supervisor-contact">
+            <div class="contact-header">
+              <div class="contact-role">責任者</div>
+              <div class="contact-priority">緊急時</div>
+            </div>
+            <div class="contact-info">
+              <div class="contact-name">高野 美幸</div>
+              <a href="tel:090-2914-6883" class="contact-phone">
+                <svg class="phone-icon" viewBox="0 0 24 24">
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                </svg>
+                090-2914-6883
+              </a>
+            </div>
+          </div>
+
+          <div class="contact-card supervisor-contact">
+            <div class="contact-header">
+              <div class="contact-role">責任者</div>
+              <div class="contact-priority">緊急時</div>
+            </div>
+            <div class="contact-info">
+              <div class="contact-name">山本 裕貴</div>
+              <a href="tel:080-6736-5012" class="contact-phone">
+                <svg class="phone-icon" viewBox="0 0 24 24">
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                </svg>
+                080-6736-5012
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="contact-instructions">
+          <strong>📞 連絡順序</strong><br>
+          1. 管理者（早崎）に最優先で連絡<br>
+          2. 連絡がつかない場合は責任者（高野・山本）に順次連絡<br>
+          3. 電話番号をタップすると直接発信できます
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">
+          <div class="section-icon">
+            <svg class="icon" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10"/>
+              <circle cx="12" cy="12" r="6"/>
+              <circle cx="12" cy="12" r="2"/>
+            </svg>
+          </div>
+          利用者の避難支援グループ
+        </h2>
+        <!-- 全デバイス統一カードレイアウト -->
+        <div class="evacuation-cards">
+          <div class="evacuation-card level-1">
+            <div class="evacuation-card-header">
+              <div class="level-info">
+                <div class="level-badge">レベル1</div>
+                <div class="independence-level">自立度：高</div>
+              </div>
+              <div class="user-count">6名</div>
+            </div>
+            <div class="evacuation-card-body">
+              <div class="support-description">声かけのみでリビングに集合可能</div>
+              <div class="support-detail">自分で移動できる方</div>
+              <div class="user-grid">
+                <div class="user-card">森 秀昭</div>
+                <div class="user-card">峪 重治</div>
+                <div class="user-card">菊池 翼</div>
+                <div class="user-card">椛沢 由佳</div>
+                <div class="user-card">大谷 雄二</div>
+                <div class="user-card">志太 博之</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="evacuation-card level-2">
+            <div class="evacuation-card-header">
+              <div class="level-info">
+                <div class="level-badge">レベル2</div>
+                <div class="independence-level">自立度：中</div>
+              </div>
+              <div class="user-count">5名</div>
+            </div>
+            <div class="evacuation-card-body">
+              <div class="support-description">移乗支援でリビングに集合可能</div>
+              <div class="support-detail">部分的な介助が必要な方</div>
+              <div class="user-grid">
+                <div class="user-card">立石 芳樹</div>
+                <div class="user-card">森 愛子</div>
+                <div class="user-card">村田 美雪</div>
+                <div class="user-card">山川 啓太</div>
+                <div class="user-card">坂口 彩</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="evacuation-card level-3">
+            <div class="evacuation-card-header">
+              <div class="level-info">
+                <div class="level-badge">レベル3</div>
+                <div class="independence-level">自立度：要支援</div>
+              </div>
+              <div class="user-count">6名</div>
+            </div>
+            <div class="evacuation-card-body">
+              <div class="support-description">介助者なしでは移動困難</div>
+              <div class="support-detail">全面的な介助が必要な方</div>
+              <div class="user-grid">
+                <div class="user-card">近藤 安正</div>
+                <div class="user-card">樋口 太一</div>
+                <div class="user-card">持田 郁恵</div>
+                <div class="user-card">川田 三郎</div>
+                <div class="user-card">渡辺 タヱ</div>
+                <div class="user-card">小野寺 英雄</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">
+          <div class="section-icon">
+            <svg class="icon" viewBox="0 0 24 24">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+              <circle cx="12" cy="10" r="3"/>
+            </svg>
+          </div>
+          避難場所・移動経路
+        </h2>
+        <div class="evacuation-locations">
+          <div class="location-card">
+            <div class="location-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M3 21h18"/>
+                <path d="M5 21V7l8-4v18"/>
+                <path d="M19 21V11l-6-4"/>
+              </svg>
+            </div>
+            <div class="location-title">一次避難場所</div>
+            <div>リビング</div>
+            <small>建物内での安全確保</small>
+          </div>
+          <div class="location-card">
+            <div class="location-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M14 16H9m10 0h3v2a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-2h3m18 0v-9a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v9"/>
+                <circle cx="7" cy="13" r="1"/>
+                <circle cx="17" cy="13" r="1"/>
+              </svg>
+            </div>
+            <div class="location-title">二次避難場所</div>
+            <div>駐車場</div>
+            <small>建物損壊・ガス漏れ時</small>
+          </div>
+          <div class="location-card">
+            <div class="location-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
+                <path d="M6 12v5c3 3 9 3 12 0v-5"/>
+              </svg>
+            </div>
+            <div class="location-title">三次避難場所</div>
+            <div>野川小学校</div>
+            <small>行政からの避難指示時</small>
+          </div>
+        </div>
+        <div style="margin-top: 25px; padding: 20px; background: #fff3cd; border-radius: 10px; border-left: 5px solid #ffc107;">
+          <strong>⚠️ 移動時の注意事項</strong><br>
+          • 階段で降りられる方は階段を使用<br>
+          • エレベーターは1基のみのため、重度者優先<br>
+          • 避難時は必ず点呼を実施
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">
+          <div class="section-icon">
+            <svg class="icon" viewBox="0 0 24 24">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+            </svg>
+          </div>
+          家族への連絡体制
+        </h2>
+        <div class="contact-info">
+          <h3>連絡優先順位</h3>
+          <p>1. レベル3（要支援）利用者の家族から優先連絡<br>
+          2. その後、全家族へ一斉連絡</p>
+          
+          <h3>使用手段</h3>
+          <p>SMS ▶ LINE ▶ 電話 の順で連絡</p>
+          
+          <a href="https://docs.google.com/spreadsheets/d/1yX_LsBAsJCAFFVWO0_Ti0pzRviPtntcavYQfW1IoxwM/edit?gid=0#gid=0" target="_blank" class="contact-link">
+            <svg style="width: 20px; height: 20px; margin-right: 8px;" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+              <path d="M12 18h.01"/>
+            </svg>
+            家族連絡先名簿（Googleスプレッドシート）
+          </a>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">
+          <div class="section-icon">
+            <svg class="icon" viewBox="0 0 24 24">
+              <path d="M16.5 9.4 7.55 4.24"/>
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+              <polyline points="3.29,7 12,12 20.71,7"/>
+              <line x1="12" y1="22" x2="12" y2="12"/>
+            </svg>
+          </div>
+          備蓄物品（17名×3日分）
+        </h2>
+        <div class="supplies-grid">
+          <!-- 飲料・食料 -->
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+              </svg>
+            </div>
+            <div>
+              <strong>飲料水</strong><br>
+              153L（3L×3日×17人）+ 予備20L
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/>
+                <path d="M7 2v20"/>
+                <path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>
+              </svg>
+            </div>
+            <div>
+              <strong>主食（米・パン）</strong><br>
+              レトルトご飯51食、缶詰パン51個
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            </div>
+            <div>
+              <strong>副食（レトルト・缶詰）</strong><br>
+              カレー・シチュー・おかず缶詰 各種
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10"/>
+                <circle cx="12" cy="12" r="4"/>
+              </svg>
+            </div>
+            <div>
+              <strong>嚥下調整食品</strong><br>
+              とろみ粉、ゼリー食、ムース食
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <circle cx="6" cy="6" r="3"/>
+                <path d="M8.12 8.12 12 12"/>
+                <path d="M20 4 8.12 15.88"/>
+                <circle cx="18" cy="18" r="3"/>
+                <path d="M14.8 14.8 20 20"/>
+              </svg>
+            </div>
+            <div>
+              <strong>調理器具</strong><br>
+              はさみ、カセットコンロ、鍋
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <circle cx="9" cy="21" r="1"/>
+                <circle cx="20" cy="21" r="1"/>
+                <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+              </svg>
+            </div>
+            <div>
+              <strong>食器・カトラリー</strong><br>
+              紙コップ・皿・スプーン・フォーク・箸
+            </div>
+          </div>
+
+          <!-- 排泄・衛生用品 -->
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M3 21h18"/>
+                <path d="M6 21V9a9 9 0 0 1 18 0v12"/>
+              </svg>
+            </div>
+            <div>
+              <strong>簡易トイレ</strong><br>
+              便座型5台・便袋100セット・凝固剤
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <rect x="6" y="4" width="4" height="16"/>
+                <rect x="14" y="4" width="4" height="16"/>
+              </svg>
+            </div>
+            <div>
+              <strong>トイレ用品</strong><br>
+              トイレットペーパー20ロール・清拭用品
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M18 6 6 18"/>
+                <path d="M6 6l12 12"/>
+              </svg>
+            </div>
+            <div>
+              <strong>おむつ・パッド</strong><br>
+              大人用おむつ・尿とりパッド各サイズ
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M20.2 6 3 11l-.6-2.2-.5-2L20.2 6z"/>
+                <path d="M6.1 15.1 3 11l3.1 4.1"/>
+                <path d="M17.8 15.8 21 12l-3.2 3.8"/>
+              </svg>
+            </div>
+            <div>
+              <strong>衛生用品</strong><br>
+              マスク・消毒液・ウェットティッシュ・石鹸
+            </div>
+          </div>
+
+          <!-- 医療・介護用品 -->
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <rect x="9" y="9" width="6" height="6"/>
+                <path d="M9 1v6"/>
+                <path d="M15 1v6"/>
+                <path d="M9 17v6"/>
+                <path d="M15 17v6"/>
+                <path d="M1 9h6"/>
+                <path d="M1 15h6"/>
+                <path d="M17 9h6"/>
+                <path d="M17 15h6"/>
+              </svg>
+            </div>
+            <div>
+              <strong>医薬品</strong><br>
+              処方薬7日分・頓服薬・常備薬リスト
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.29 1.51 4.04 3 5.5Z"/>
+                <path d="M12 5L8 21l4-7 4 7-4-16"/>
+              </svg>
+            </div>
+            <div>
+              <strong>救急用品</strong><br>
+              包帯・ガーゼ・消毒液・体温計・血圧計
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+                <path d="M12 18h.01"/>
+              </svg>
+            </div>
+            <div>
+              <strong>移動・移乗用具</strong><br>
+              車椅子1台・歩行器・移乗ボード
+            </div>
+          </div>
+
+          <!-- 電源・照明・通信 -->
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/>
+                <line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/>
+                <line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            </div>
+            <div>
+              <strong>照明器具</strong><br>
+              LEDランタン5台・懐中電灯10本・ろうそく
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <rect x="1" y="6" width="18" height="10" rx="2" ry="2"/>
+                <line x1="22" y1="12" x2="19" y2="12"/>
+              </svg>
+            </div>
+            <div>
+              <strong>電源確保</strong><br>
+              モバイルバッテリー・乾電池・発電機
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+            </div>
+            <div>
+              <strong>通信機器</strong><br>
+              携帯ラジオ・トランシーバー・充電器
+            </div>
+          </div>
+
+          <!-- 防寒・寝具 -->
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M2 4v16"/>
+                <path d="M2 8h18a2 2 0 0 1 2 2v10"/>
+                <path d="M2 17h20"/>
+                <path d="M6 8V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v4"/>
+              </svg>
+            </div>
+            <div>
+              <strong>寝具・防寒用品</strong><br>
+              毛布20枚・寝袋・防寒着・アルミシート
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M8 12l2 2 4-4"/>
+              </svg>
+            </div>
+            <div>
+              <strong>マット・クッション</strong><br>
+              エアマット・座布団・体位変換クッション
+            </div>
+          </div>
+
+          <!-- 工具・その他 -->
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              </svg>
+            </div>
+            <div>
+              <strong>工具類</strong><br>
+              ハンマー・のこぎり・バール・軍手
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                <line x1="8" y1="21" x2="16" y2="21"/>
+                <line x1="12" y1="17" x2="12" y2="21"/>
+              </svg>
+            </div>
+            <div>
+              <strong>情報収集</strong><br>
+              ホワイトボード・マーカー・掲示用紙
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M14 9V5a3 3 0 0 0-6 0v4"/>
+                <rect x="2" y="9" width="20" height="12" rx="2" ry="2"/>
+              </svg>
+            </div>
+            <div>
+              <strong>保管・整理用品</strong><br>
+              保存袋・ダンボール・養生テープ・ロープ
+            </div>
+          </div>
+          <div class="supply-item">
+            <div class="supply-icon">
+              <svg class="icon" viewBox="0 0 24 24">
+                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+              </svg>
+            </div>
+            <div>
+              <strong>書類・記録用品</strong><br>
+              利用者名簿・緊急連絡先・筆記用具
+            </div>
+          </div>

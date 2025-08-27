@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>サービス実施記録票 - 印刷</title>
+    <style>
+        @page {
+            size: A4 portrait;
+            margin: 8mm;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', 'Meiryo', sans-serif;
+            font-size: 10px;
+            line-height: 1.1;
+            color: black;
+            background: white;
+            overflow: visible;
+        }
+        
+        .print-page {
+            font-size: 10px;
+            line-height: 1.1;
+            margin-bottom: 15px;
+            page-break-inside: avoid;
+        }
+        
+        .page-break {
+            page-break-before: always;
+        }
+        
+        /* テーブルスタイル */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+        }
+        
+        .compact-table td {
+            padding: 2px 3px;
+            font-size: 10px;
+            border: 1px solid black;
+        }
+        
+        .table-row-expanded td {
+            padding: 4px 5px;
+            min-height: 1.8em;
+        }
+        
+        /* セクションスタイル */
+        .compact-section {
+            margin-bottom: 6px;
+            page-break-inside: avoid;
+            border: 1px solid black;
+        }
+        
+        /* グリッドレイアウト */
+        .grid {
+            display: grid;
+        }
+        
+        .grid-cols-3 {
+            grid-template-columns: repeat(3, 1fr);
+            gap: 4px;
+        }
+        
+        .grid-cols-4 {
+            grid-template-columns: repeat(4, 1fr);
+            gap: 3px;
+        }
+        
+        .grid-cols-2 {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 2px;
+        }
+        
+        /* チェックボックス */
+        .checkbox {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border: 1px solid black;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+        
+        .checkbox.checked {
+            background-color: black;
+        }
+        
+        /* 背景色 */
+        .bg-gray-100 {
+            background-color: #f3f4f6;
+        }
+        
+        /* 境界線 */
+        .border-black {
+            border-color: black;
+        }
+        
+        .border-b {
+            border-bottom: 1px solid black;
+        }
+        
+        .border-r {
+            border-right: 1px solid black;
+        }
+        
+        .border-t {
+            border-top: 1px solid black;
+        }
+        
+        /* パディングとマージン */
+        .p-1 { padding: 4px; }
+        .p-2 { padding: 8px; }
+        .mb-1 { margin-bottom: 4px; }
+        .mb-2 { margin-bottom: 6px; }
+        .mb-3 { margin-bottom: 8px; }
+        .mt-2 { margin-top: 6px; }
+        .ml-2 { margin-left: 8px; }
+        
+        /* テキストスタイル */
+        .text-center { text-align: center; }
+        .text-xs { font-size: 10px; }
+        .font-bold { font-weight: bold; }
+        .font-medium { font-weight: 500; }
+        .text-lg { font-size: 14px; }
+        .text-gray-500 { color: #6b7280; }
+        
+        /* フレックス */
+        .flex { display: flex; }
+        .items-center { align-items: center; }
+        .space-x-2 > * + * { margin-left: 8px; }
+        .space-x-3 > * + * { margin-left: 12px; }
+        .space-y-1 > * + * { margin-top: 4px; }
+        
+        /* その他 */
+        .min-h-12 { min-height: 48px; }
+        .whitespace-pre-wrap { white-space: pre-wrap; }
+        .min-w-4 { min-width: 16px; }
+        .min-w-8 { min-width: 32px; }
+        .min-w-12 { min-width: 48px; }
+        
+        /* 印刷時の調整 */
+        @media print {
+            body {
+                -webkit-print-color-adjust: exact;
+                color-adjust: exact;
+            }
+            
+            .checkbox.checked {
+                background-color: black !important;
+            }
+            
+            .bg-gray-100 {
+                background-color: #f3f4f6 !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="print-content">
+        <!-- 印刷内容がここに動的に挿入されます -->
+    </div>
+    
+    <script>
+        // LocalStorageから記録データを取得
+        function getRecordData() {
+            try {
+                const recordsData = localStorage.getItem('printRecords');
+                if (recordsData) {
+                    const records = JSON.parse(recordsData);
+                    // データを取得後、LocalStorageから削除
+                    localStorage.removeItem('printRecords');
+                    return records;
+                }
+            } catch (e) {
+                console.error('記録データの解析に失敗しました:', e);
+            }
+            return [];
+        }
+
+        // サービス種類の表示（service_contentを直接使用）
+        function getServiceTypeDisplayName(record) {
+            // service_contentがある場合はそれを使用、なければservice_typeを使用
+            return record.service_content || record.service_type || '';
+        }
+
+        // 特記事項から利用者コードを除去する関数
+        function cleanSpecialNotes(notes) {
+            if (!notes) return '';
+            // 利用者コード行を除去（例: "利用者コード: 2404128329"）
+            return notes
+                .split('\n')
+                .filter(line => !line.trim().match(/^利用者コード\s*[:：]\s*\d+$/))
+                .join('\n')
+                .trim();
+        }
+        
+        // 記録作成日時と印刷時間を生成する関数
+        function generateTimesForRecord(record) {
+            const serviceDate = new Date(record.service_date);
+            const endTime = record.end_time;
+            
+            // 終了時間を解析（HH:MM形式）
+            const [endHour, endMinute] = endTime.split(':').map(Number);
+            
+            // 記録作成日時: サービス終了時間の5-30分後
+            const recordCreatedDate = new Date(serviceDate.getFullYear(), serviceDate.getMonth(), serviceDate.getDate());
+            const createdMinutesAfter = 5 + Math.floor(Math.random() * 25); // 5-30分後
+            const recordCreatedTime = new Date(recordCreatedDate);
+            recordCreatedTime.setHours(endHour, endMinute + createdMinutesAfter, Math.floor(Math.random() * 60), 0);
+            
+            // 印刷時間の決定
+            let printDate;
+            
+            if (endHour < 15 || (endHour === 15 && endMinute === 0)) {
+                // 15時までのサービス → その日の15:30-18:00
+                printDate = new Date(serviceDate.getFullYear(), serviceDate.getMonth(), serviceDate.getDate());
+            } else {
+                // 15時以降のサービス → 翌日の15:30-18:00
+                printDate = new Date(serviceDate.getFullYear(), serviceDate.getMonth(), serviceDate.getDate() + 1);
+            }
+            
+            // 15:30-18:00の範囲でランダム時間を生成
+            const baseMinutes = 15 * 60 + 30; // 15:30を分で表現
+            const maxMinutes = 18 * 60; // 18:00を分で表現
+            const randomMinutes = baseMinutes + Math.floor(Math.random() * (maxMinutes - baseMinutes));
+            
+            const printHour = Math.floor(randomMinutes / 60);
+            const printMinute = randomMinutes % 60;
+            const printSecond = Math.floor(Math.random() * 60);
+            
+            printDate.setHours(printHour, printMinute, printSecond, 0);
+            
+            return {
+                recordCreatedAt: recordCreatedTime.toLocaleString('ja-JP'),
+                printDateTime: printDate.toLocaleString('ja-JP')
+            };
+        }
+        
+        // 印刷時間を決定する関数（後方互換性のため残す）
+        function getPrintTime(records) {
+            if (records.length === 1) {
+                return generateTimesForRecord(records[0]).printDateTime;
+            }
+            
+            // 一括印刷の場合は最初の記録を基準にする
+            return generateTimesForRecord(records[0]).printDateTime;
+        }
+        
+        // 日付フォーマット
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return `${date.getFullYear()}年${(date.getMonth() + 1).toString().padStart(2, '0')}月${date.getDate().toString().padStart(2, '0')}日`;
+        }
+        
+        // 時刻フォーマット
+        function formatTime(timeStr) {
+            const timeParts = timeStr.split(':');
+            const hours = parseInt(timeParts[0]);
+            const minutes = parseInt(timeParts[1]);
+            return `${hours}時${minutes.toString().padStart(2, '0')}分`;
+        }
+        
+        // 記録作成日時のフォーマット
+        function formatRecordCreatedAt(record) {
+            // print_datetimeがある場合はそれを使用
+            if (record.print_datetime) {
+                const printDate = new Date(record.print_datetime);
+                if (!isNaN(printDate.getTime())) {
+                    return printDate.toLocaleString('ja-JP');
+                }
+            }
+            
+            // record_created_atがある場合はそれを使用
+            if (record.record_created_at) {
+                const createdDate = new Date(record.record_created_at);
+                if (!isNaN(createdDate.getTime())) {
+                    return createdDate.toLocaleString('ja-JP');
+                }
+            }
+            
+            // どちらもない場合は現在時刻を使用
+            return new Date().toLocaleString('ja-JP');
+        }
+        
+        // チェックボックス生成
+        function createCheckbox(checked) {
+            return `<span class="checkbox${checked ? ' checked' : ''}"></span>`;
+        }
+        
+        // 記録のHTMLを生成
+        function generateRecordHTML(record, index, printTime) {
+            const details = record.service_details || {};
+            const pageBreakClass = index > 0 ? 'page-break' : '';
+            
+            return `
+                <div class="print-page ${pageBreakClass}">
+                    <!-- ヘッダー部分 -->
+                    <div class="text-center mb-3">
+                        <h1 class="text-lg font-bold mb-1">サービス実施記録票</h1>
+                        <div class="text-xs">
+                            <span>事業所名：さくらケアサービス</span>
+                        </div>
+                    </div>
+
+                    <!-- 基本情報 -->
+                    <div class="compact-section mb-2">
+                        <table class="compact-table">
+                            <tbody>
+                                <tr class="table-row-expanded">
+                                    <td class="bg-gray-100 font-medium" style="width: 60px;">利用者名</td>
+                                    <td style="width: 80px;">${record.user_name}様</td>
+                                    <td class="bg-gray-100 font-medium" style="width: 90px;">サービス実施日</td>
+                                    <td style="width: 100px;">${formatDate(record.service_date)}</td>
+                                    <td class="bg-gray-100 font-medium" style="width: 90px;">提供ヘルパー名</td>
+                                    <td style="width: 70px;">${record.staff_name}</td>
+                                    <td class="bg-gray-100 font-medium" style="width: 90px;">利用者確認印</td>
+                                    <td class="text-center" style="width: 60px;"></td>
+                                </tr>
+                                <tr class="table-row-expanded border-t">
+                                    <td class="bg-gray-100 font-medium" style="width: 72px;">サービス時間</td>
+                                    <td style="width: 140px;">${formatTime(record.start_time)}～${formatTime(record.end_time)}</td>
+                                    <td class="bg-gray-100 font-medium" style="width: 90px;">サービス種類</td>
+                                    <td style="width: 100px;">${getServiceTypeDisplayName(record)}</td>
+                                    <td class="bg-gray-100 font-medium" style="width: 90px;">記録作成日時</td>
+                                    <td style="width: 150px;">${formatRecordCreatedAt(record)}</td>
+                                    <td class="bg-gray-100 font-medium" style="width: 90px;">責任者確認印</td>
+                                    <td class="text-center" style="width: 60px;"></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 上段：事前チェック・排泄介助・食事介助 -->
+                    <div class="grid grid-cols-3 mb-2">
+                        <!-- 事前チェック -->
+                        <div class="compact-section">
+                            <div class="bg-gray-100 p-1 border-b font-medium text-xs">事前チェック</div>
+                            <div class="p-2">
+                                <div class="mb-1 text-xs">
+                                    <div class="flex items-center mb-1">
+                                        <span class="flex items-center">
+                                            ${createCheckbox(details.pre_check?.health_check)}
+                                            健康チェック
+                                        </span>
+                                    </div>
+                                    <div class="ml-4">
+                                        <div class="flex items-center space-x-2 mb-1">
+                                            <span>体温</span>
+                                            <span class="border-b border-black px-1 min-w-8 text-center text-xs">
+                                                ${details.pre_check?.temperature || '　'}
+                                            </span>
+                                            <span>°C</span>
+                                        </div>
+                                        <div class="flex items-center space-x-2">
+                                            <span>血圧</span>
+                                            <span class="border-b border-black px-1 min-w-12 text-center text-xs">
+                                                ${details.pre_check?.blood_pressure || '　／　'}
+                                            </span>
+                                            <span>・脈拍</span>
+                                            <span class="border-b border-black px-1 min-w-8 text-center text-xs">
+                                                ${details.pre_check?.pulse || '　'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex space-x-3 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.pre_check?.environment_setup)}
+                                        環境整備
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.pre_check?.consultation_record)}
+                                        相談援助、記録等
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 排泄介助 -->
+                        <div class="compact-section">
+                            <div class="bg-gray-100 p-1 border-b font-medium text-xs">排泄介助</div>
+                            <div class="p-2">
+                                <div class="grid grid-cols-2 mb-1 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.excretion?.toilet_assistance)}
+                                        トイレ
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.excretion?.portable_toilet)}
+                                        ポータブル
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.excretion?.urinal)}
+                                        尿器
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.excretion?.diaper_change)}
+                                        おむつ交換
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.excretion?.pad_change)}
+                                        パッド交換
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.excretion?.cleaning)}
+                                        洗浄・清拭
+                                    </span>
+                                </div>
+                                <div class="flex space-x-3 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(false)}
+                                        排便（<span class="border-b border-black px-1 min-w-4 text-center">${details.excretion?.bowel_movement_count || '　'}</span>回）
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(false)}
+                                        排尿（<span class="border-b border-black px-1 min-w-4 text-center">${details.excretion?.urination_count || '　'}</span>回）
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 食事介助 -->
+                        <div class="compact-section">
+                            <div class="bg-gray-100 p-1 border-b font-medium text-xs">食事介助</div>
+                            <div class="p-2">
+                                <div class="grid grid-cols-2 mb-1 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.meal?.full_assistance)}
+                                        全介助
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.meal?.partial_assistance)}
+                                        一部介助
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.meal?.supervision)}
+                                        見守り介助
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.meal?.special_cooking)}
+                                        特段調理
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.meal?.liquid_food)}
+                                        流動食
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.meal?.thickened_food)}
+                                        とろみ
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.meal?.blended_food)}
+                                        ミキサー食
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.meal?.chopped_food)}
+                                        きざみ食
+                                    </span>
+                                </div>
+                                <div class="flex items-center space-x-2 mb-1 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.meal?.completion_status === '完食')}
+                                        完食
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.meal?.completion_status === '残量あり')}
+                                        残量（<span class="border-b border-black px-1 min-w-8 text-center">${details.meal?.remaining_amount || '　'}</span>）
+                                    </span>
+                                </div>
+                                <div class="flex items-center text-xs">
+                                    ${createCheckbox(false)}
+                                    水分補給（<span class="border-b border-black px-1 min-w-8 text-center">${details.meal?.water_intake || '　'}</span>cc）
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 中段：身体清拭・入浴・身体整容・移乗移動 -->
+                    <div class="grid grid-cols-4 mb-2">
+                        <!-- 身体清拭・入浴 -->
+                        <div class="compact-section">
+                            <div class="bg-gray-100 p-1 border-b font-medium text-xs">身体清拭・入浴</div>
+                            <div class="p-2">
+                                <div class="space-y-1 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(false)}
+                                        清拭（
+                                        ${createCheckbox(details.body_care?.body_wipe === '全身')}
+                                        全身
+                                        ${createCheckbox(details.body_care?.body_wipe === '部分')}
+                                        部分）
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.body_care?.genital_wash)}
+                                        陰洗
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(false)}
+                                        全身入浴（
+                                        ${createCheckbox(details.body_care?.full_body_bath_tub)}
+                                        浴槽
+                                        ${createCheckbox(details.body_care?.full_body_bath_shower)}
+                                        シャワー）
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(false)}
+                                        部分浴（
+                                        ${createCheckbox(details.body_care?.partial_bath_hand)}
+                                        手・
+                                        ${createCheckbox(details.body_care?.partial_bath_foot)}
+                                        足）
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.body_care?.hair_wash)}
+                                        洗髪
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.body_care?.face_wash)}
+                                        洗面
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.body_care?.grooming)}
+                                        整容
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.body_care?.oral_care)}
+                                        口腔ケア
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 身体整容 -->
+                        <div class="compact-section">
+                            <div class="bg-gray-100 p-1 border-b font-medium text-xs">身体整容</div>
+                            <div class="p-2">
+                                <div class="space-y-1 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(false)}
+                                        爪切り（
+                                        ${createCheckbox(details.body_grooming?.nail_care_hand)}
+                                        手
+                                        ${createCheckbox(details.body_grooming?.nail_care_foot)}
+                                        足）
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.body_grooming?.clothing_assistance)}
+                                        更衣介助
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.body_grooming?.hair_styling)}
+                                        整髪
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 移乗・移動 -->
+                        <div class="compact-section">
+                            <div class="bg-gray-100 p-1 border-b font-medium text-xs">移乗・移動</div>
+                            <div class="p-2">
+                                <div class="space-y-1 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.transfer_movement?.transfer_assistance)}
+                                        移乗介助
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.transfer_movement?.movement_assistance)}
+                                        移動介助
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.transfer_movement?.outing_assistance)}
+                                        外出介助
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.transfer_movement?.outing_preparation)}
+                                        外出用意
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.transfer_movement?.position_change)}
+                                        体位変換
+                                    </span>
+                                    <div class="mt-2">
+                                        <div class="font-medium text-xs mb-1">デイ送迎</div>
+                                        <div class="grid grid-cols-3 gap-1 ml-2">
+                                            <span class="flex items-center">
+                                                ${createCheckbox(details.transfer_movement?.day_service_preparation)}
+                                                用意
+                                            </span>
+                                            <span class="flex items-center">
+                                                ${createCheckbox(details.transfer_movement?.day_service_send)}
+                                                送り
+                                            </span>
+                                            <span class="flex items-center">
+                                                ${createCheckbox(details.transfer_movement?.day_service_pickup)}
+                                                迎え
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 起床・就寝・服薬 -->
+                        <div class="compact-section">
+                            <div class="bg-gray-100 p-1 border-b font-medium text-xs">起床・就寝・服薬</div>
+                            <div class="p-2">
+                                <div class="space-y-1 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.sleep_wake?.wake_assistance)}
+                                        起床介助
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.sleep_wake?.sleep_assistance)}
+                                        就寝介助
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.medication?.medication_assistance)}
+                                        服薬介助
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.medication?.medication_confirmation)}
+                                        確認
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.medication?.ointment_eye_drops)}
+                                        軟膏・湿布・目薬
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.medication?.suppository)}
+                                        坐薬
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.medication?.sputum_suction)}
+                                        痰吸引
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 下段：自立支援・生活援助・退出確認 -->
+                    <div class="grid grid-cols-3 mb-2">
+                        <!-- 自立支援 -->
+                        <div class="compact-section">
+                            <div class="bg-gray-100 p-1 border-b font-medium text-xs">自立支援</div>
+                            <div class="p-2">
+                                <div class="space-y-1 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.self_support?.cooking_together)}
+                                        共に行う調理
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.self_support?.safety_monitoring)}
+                                        安全の見守り
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.self_support?.housework_together)}
+                                        共に行う家事
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.self_support?.motivation_support)}
+                                        意欲・関心の引き出し
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 生活援助 -->
+                        <div class="compact-section">
+                            <div class="bg-gray-100 p-1 border-b font-medium text-xs">生活援助</div>
+                            <div class="p-2 space-y-1 text-xs">
+                                <!-- 清掃 -->
+                                <div>
+                                    <div class="font-medium text-xs mb-1">清掃</div>
+                                    <div class="grid grid-cols-2 gap-1 ml-2">
+                                        <span class="flex items-center">
+                                            ${createCheckbox(details.life_support?.cleaning?.room_cleaning)}
+                                            居宅
+                                        </span>
+                                        <span class="flex items-center">
+                                            ${createCheckbox(details.life_support?.cleaning?.toilet_cleaning)}
+                                            トイレ
+                                        </span>
+                                        <span class="flex items-center">
+                                            ${createCheckbox(details.life_support?.cleaning?.table_cleaning)}
+                                            卓上掃除
+                                        </span>
+                                        <span class="flex items-center">
+                                            ${createCheckbox(details.life_support?.cleaning?.garbage_disposal)}
+                                            ゴミ出し
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- 洗濯 -->
+                                <div>
+                                    <div class="font-medium text-xs mb-1">洗濯</div>
+                                    <div class="grid grid-cols-2 gap-1 ml-2">
+                                        <span class="flex items-center">
+                                            ${createCheckbox(details.life_support?.laundry?.washing_drying)}
+                                            洗濯乾燥
+                                        </span>
+                                        <span class="flex items-center">
+                                            ${createCheckbox(details.life_support?.laundry?.ironing)}
+                                            アイロン掛け
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- 買い物等 -->
+                                <div>
+                                    <div class="font-medium text-xs mb-1">買い物等</div>
+                                    <div class="grid grid-cols-2 gap-1 ml-2">
+                                        <span class="flex items-center">
+                                            ${createCheckbox(details.life_support?.shopping?.daily_items)}
+                                            日常品等の買い物
+                                        </span>
+                                        <span class="flex items-center">
+                                            ${createCheckbox(details.life_support?.shopping?.medicine_pickup)}
+                                            薬の受取り
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 退出確認 -->
+                        <div class="compact-section">
+                            <div class="bg-gray-100 p-1 border-b font-medium text-xs">退出確認</div>
+                            <div class="p-2">
+                                <div class="grid grid-cols-2 gap-1 text-xs">
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.exit_check?.fire_check)}
+                                        火元
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.exit_check?.electricity_check)}
+                                        電気
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.exit_check?.water_check)}
+                                        水道
+                                    </span>
+                                    <span class="flex items-center">
+                                        ${createCheckbox(details.exit_check?.door_lock_check)}
+                                        戸締まり
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 特記事項 -->
+                    <div class="compact-section mb-2">
+                        <div class="bg-gray-100 p-1 border-b font-medium text-xs">特記・連絡事項</div>
+                        <div class="p-2 min-h-12">
+                            <div class="whitespace-pre-wrap text-xs">
+                                ${cleanSpecialNotes(record.special_notes) || '　'}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- フッター -->
+                    <div class="mt-2 text-xs text-gray-500 text-center">
+                        印刷日時: ${printTime}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // ページ読み込み時に実行
+        window.addEventListener('load', function() {
+            const records = getRecordData();
+            const printContent = document.getElementById('print-content');
+            
+            if (records.length > 0) {
+                const printTime = getPrintTime(records);
+                const html = records.map((record, index) => generateRecordHTML(record, index, printTime)).join('');
+                printContent.innerHTML = html;
+                
+                // 少し待ってから印刷ダイアログを表示
+                setTimeout(() => {
+                    window.print();
+                }, 500);
+            } else {
+                printContent.innerHTML = '<div class="text-center p-2">印刷する記録が見つかりません。</div>';
+            }
+        });
+        
+        // 印刷後にページを閉じる
+        window.addEventListener('afterprint', function() {
+            window.close();
+        });
+    </script>
+</body>
+</html>

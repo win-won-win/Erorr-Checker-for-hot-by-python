@@ -903,7 +903,6 @@ def generate_0_24_jinjer_csv(selected_employees: List[str], target_month: str, a
 
 def show_optimal_attendance_export():
     """最適勤怠データ出力UI"""
-    st.markdown("## 🎯 最適勤怠データ出力")
     
     # デバッグモードの設定
     debug_mode = st.checkbox("🔍 デバッグモードを有効にする", value=False, help="データソースや最適化処理の詳細情報を表示します")

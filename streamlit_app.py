@@ -11,6 +11,29 @@ from datetime import datetime
 import calendar
 from typing import List, Dict, Any
 
+# アイコン定義（洗練されたUnicodeアイコン）
+ICONS = {
+    'folder': '🗂️',      # フォルダ
+    'chart': '📈',       # チャート
+    'list': '📝',        # リスト
+    'download': '⬇️',     # ダウンロード
+    'target': '🎯',      # ターゲット
+    'settings': '⚙️',    # 設定
+    'search': '🔎',      # 検索
+    'info': 'ℹ️',        # 情報
+    'warning': '⚠️',     # 警告
+    'error': '🚫',       # エラー
+    'success': '✅',     # 成功
+    'debug': '🛠️',       # デバッグ
+    'users': '👥',       # ユーザー複数
+    'user': '👤',        # ユーザー単体
+    'staff': '👨‍💼',      # スタッフ
+    'time': '🕐',        # 時間
+    'calendar': '📅',    # カレンダー
+    'file': '📄',        # ファイル
+    'zip': '🗜️'          # ZIP
+}
+
 # optimal_attendance_export.pyの機能をインポート
 from optimal_attendance_export import (
     create_jinjer_headers,
@@ -26,7 +49,7 @@ from optimal_attendance_export import (
 # 詳細分析機能（関数定義）
 def show_overlap_analysis(df):
     """重複の詳細分析を表示"""
-    st.markdown("#### 📊 重複分析")
+    st.markdown("#### 重複分析")
     
     # データの存在確認
     if 'H' not in df.columns:
@@ -72,7 +95,7 @@ def show_overlap_analysis(df):
 
 def show_attendance_excess_analysis(df):
     """勤怠超過の詳細分析を表示"""
-    st.markdown("#### 📊 勤怠超過分析")
+    st.markdown("#### 勤怠超過分析")
     
     # データの存在確認
     if 'I' not in df.columns:
@@ -131,7 +154,7 @@ def show_attendance_excess_analysis(df):
 
 def show_time_slot_analysis(df):
     """時間帯分析を表示"""
-    st.markdown("#### 📊 時間帯分析")
+    st.markdown("#### 時間帯分析")
     
     # 時間帯別のエラー分布
     if 'E' in df.columns and df['E'].notna().any():
@@ -154,7 +177,7 @@ def show_time_slot_analysis(df):
 
 def show_staff_workload_analysis(df):
     """職員負荷分析を表示"""
-    st.markdown("#### 📊 職員負荷分析")
+    st.markdown("#### 職員負荷分析")
     
     if 'C' in df.columns and df['C'].notna().any():
         staff_workload = df.groupby('C').agg({
@@ -174,7 +197,7 @@ def show_staff_workload_analysis(df):
 
 def show_row_detail_modal(row):
     """選択された行の詳細情報をモーダル風に表示"""
-    with st.expander(f"📋 詳細情報 - {row.get('C', 'N/A')} ({row.get('D', 'N/A')})", expanded=True):
+    with st.expander(f"詳細情報 - {row.get('C', 'N/A')} ({row.get('D', 'N/A')})", expanded=True):
         col1, col2 = st.columns(2)
         
         with col1:
@@ -368,10 +391,34 @@ def prepare_grid_data(result_paths):
     return df[column_order] if not df.empty else pd.DataFrame(columns=column_order)
 
 # ページ設定
-st.set_page_config(page_title="サービス実態 × 勤怠 不整合チェック", layout="wide")
+st.set_page_config(page_title="重複チェッカー for hot", layout="wide")
 
-st.title("サービス実態 × 勤怠 不整合チェック UI")
-st.markdown("施設ごとのサービス実態CSV（複数）と勤怠履歴CSVをアップロードし、ボタン1つで突合・検出とresult CSVの出力を行います。")
+# カスタムCSS
+st.markdown("""
+<style>
+/* ファイルアップローダーのスタイル調整 */
+.stFileUploader > div > div > div > div {
+    border: 2px dashed #cccccc;
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    background-color: #f8f9fa;
+}
+
+.stFileUploader > div > div > div > div:hover {
+    border-color: #007bff;
+    background-color: #e3f2fd;
+}
+
+/* ファイルアップローダーのテキストを隠す（完全には隠せないが目立たなくする） */
+.stFileUploader > div > div > div > div > small {
+    color: #6c757d;
+    font-size: 0.8em;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("重複チェッカー for hot")
 
 # セッション状態の初期化
 if 'processing_complete' not in st.session_state:
@@ -387,76 +434,46 @@ if 'workdir' not in st.session_state:
 
 # サイドバーのオプション設定
 with st.sidebar:
-    st.header("オプション")
-    identical_prefer = st.selectbox(
-        "完全一致時のフラグ付与（施設名の昇順で）",
-        options=["earlier", "later"],
-        index=0,
-        help="開始/終了が完全一致のときに、施設名の昇順で earlier/later のどちらにフラグ付与するか"
-    )
-    alt_delim = st.text_input("代替職員リストの区切り文字", value="/")
-    use_schedule_when_missing = st.checkbox("実打刻が欠損のときに予定で代用する (--use-schedule-when-missing)", value=True)
-    service_staff_col = st.text_input("サービス実態の従業員列名", value="担当所員")
-    att_name_col = st.text_input("勤怠の従業員列名", value="名前")
-    generate_diagnostics = st.checkbox("診断CSVを出力する", value=True)
+    st.header("設定")
+    identical_prefer = st.selectbox("完全一致時", ["earlier", "later"], index=0)
+    alt_delim = st.text_input("区切り文字", value="/")
+    use_schedule_when_missing = st.checkbox("予定で代用", value=True)
+    service_staff_col = st.text_input("サービス従業員列", value="担当所員")
+    att_name_col = st.text_input("勤怠従業員列", value="名前")
+    generate_diagnostics = st.checkbox("診断CSV出力", value=True)
 
 # タブの作成
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📁 ファイルアップロード",
-    "📊 検出サマリー",
-    "📋 詳細データ",
-    "💾 ダウンロード・最適化",
-    "🎯 最適勤怠データ出力"
+tab1, tab2, tab3, tab4 = st.tabs([
+    "①アップロード",
+    "②エラー確認",
+    "③勤怠CSVダウンロード",
+    "④エラーダウンロード"
 ])
 
-# タブ1: ファイルアップロード
+# タブ1: ①アップロード
 with tab1:
-    st.header("📁 ファイルアップロード")
+    st.header("①アップロード")
     
-    st.subheader("1. 施設ごとのサービス実態CSV（複数可）")
-    st.markdown("サービス実態CSV（A,B,C... など複数）")
-    svc_files = st.file_uploader(
-        "Drag and drop files here", 
-        type=["csv"], 
-        accept_multiple_files=True, 
-        key="svc",
-        help="Limit 200MB per file • CSV"
-    )
+    st.subheader("サービス実態CSV（複数可）")
+    st.info("CSVファイルをここにドラッグ&ドロップするか、下のボタンからファイルを選択してください")
+    svc_files = st.file_uploader("ファイル選択", type=["csv"], accept_multiple_files=True, key="svc", label_visibility="collapsed")
     
-    # アップロードされたファイルの表示
     if svc_files:
-        st.markdown("**アップロード済みファイル:**")
         for file in svc_files:
-            file_size = len(file.getvalue()) / 1024  # KB
-            if file_size < 1024:
-                size_str = f"{file_size:.1f}KB"
-            else:
-                size_str = f"{file_size/1024:.1f}MB"
+            file_size = len(file.getvalue()) / 1024
+            size_str = f"{file_size:.1f}KB" if file_size < 1024 else f"{file_size/1024:.1f}MB"
             st.write(f"• {file.name} ({size_str})")
     
-    st.subheader("2. 勤怠履歴CSV（1件）")
-    st.markdown("勤怠履歴CSV")
-    att_file = st.file_uploader(
-        "Drag and drop file here", 
-        type=["csv"], 
-        accept_multiple_files=False, 
-        key="att",
-        help="Limit 200MB per file • CSV"
-    )
+    st.subheader("勤怠履歴CSV")
+    st.info("CSVファイルをここにドラッグ&ドロップするか、下のボタンからファイルを選択してください")
+    att_file = st.file_uploader("ファイル選択", type=["csv"], key="att", label_visibility="collapsed")
     
-    # アップロードされたファイルの表示
     if att_file:
-        file_size = len(att_file.getvalue()) / 1024  # KB
-        if file_size < 1024:
-            size_str = f"{file_size:.1f}KB"
-        else:
-            size_str = f"{file_size/1024:.1f}MB"
+        file_size = len(att_file.getvalue()) / 1024
+        size_str = f"{file_size:.1f}KB" if file_size < 1024 else f"{file_size/1024:.1f}MB"
         st.write(f"• {att_file.name} ({size_str})")
     
-    st.markdown("---")
-    
-    # 実行ボタン
-    run = st.button("エラーチェックを実行する", type="primary", use_container_width=True)
+    run = st.button("エラーチェック実行", type="primary", use_container_width=True)
     
     if run:
         if not svc_files:
@@ -481,7 +498,6 @@ with tab1:
 
             # アップロードファイルを保存
             # 施設CSVはアップロード名をそのまま使う（result_*.csvの施設名に影響）
-            st.info(f"サービス実態CSVファイル数: {len(svc_files)}")
             
             # 同名ファイルの重複チェックと連番付与
             saved_files = {}
@@ -504,69 +520,24 @@ with tab1:
                     # save_upload_toは正規化されたパスとデバッグ情報を返す
                     actual_path, debug_info = save_upload_to(file_path, up)
                     
-                    # デバッグ情報を表示
-                    with st.expander(f"🔧 デバッグ情報: {original_name}", expanded=False):
-                        for info in debug_info:
-                            st.write(f"• {info}")
-                    
-                    # 保存されたファイルの確認
                     if os.path.exists(actual_path):
-                        file_size = os.path.getsize(actual_path)
-                        st.success(f"✅ 保存成功: {original_name} -> {os.path.basename(actual_path)} ({file_size} bytes)")
                         saved_service_files.append(os.path.basename(actual_path))
-                    else:
-                        st.error(f"❌ 保存失敗: {original_name} -> ファイルが見つかりません")
-                        st.error(f"実際のパス: {actual_path}")
-                        
-                    # 追加の確認：ディレクトリ内のファイル一覧を表示
-                    st.info(f"🔍 保存直後のディレクトリ確認 ({i+1}/{len(svc_files)}):")
-                    try:
-                        files_in_dir = os.listdir(indir)
-                        all_files = [f for f in files_in_dir]
-                        # 大文字小文字を区別しないCSVファイル検出
-                        csv_files_in_dir = [f for f in files_in_dir if f.lower().endswith('.csv')]
-                        st.write(f"全ファイル数: {len(all_files)}")
-                        st.write(f"CSVファイル数: {len(csv_files_in_dir)}")
-                        
-                        if all_files:
-                            st.write("全ファイル一覧:")
-                            for f in all_files:
-                                f_path = os.path.join(indir, f)
-                                f_size = os.path.getsize(f_path)
-                                is_csv = f.lower().endswith('.csv')
-                                st.write(f"  - {f} ({f_size} bytes) {'[CSV]' if is_csv else ''}")
-                        else:
-                            st.warning("ディレクトリにファイルが見つかりません！")
-                            
-                    except Exception as dir_e:
-                        st.error(f"ディレクトリ確認エラー: {str(dir_e)}")
                         
                 except Exception as e:
-                    st.error(f"❌ 保存エラー: {original_name} -> {str(e)}")
+                    st.error(f"保存エラー: {original_name} -> {str(e)}")
             
             att_file_path = os.path.join(indir, att_file.name)
             try:
-                # save_upload_toは正規化されたパスとデバッグ情報を返す
                 actual_att_path, att_debug_info = save_upload_to(att_file_path, att_file)
-                
-                # デバッグ情報を表示
-                with st.expander(f"🔧 勤怠履歴CSVデバッグ情報", expanded=False):
-                    for info in att_debug_info:
-                        st.write(f"• {info}")
-                
-                if os.path.exists(actual_att_path):
-                    file_size = os.path.getsize(actual_att_path)
-                    st.success(f"✅ 勤怠履歴CSV保存成功: {os.path.basename(actual_att_path)} ({file_size} bytes)")
-                else:
-                    st.error(f"❌ 勤怠履歴CSV保存失敗: ファイルが見つかりません")
-                    st.error(f"実際のパス: {actual_att_path}")
+                if not os.path.exists(actual_att_path):
+                    st.error("勤怠履歴CSV保存失敗")
                     st.stop()
             except Exception as e:
-                st.error(f"❌ 勤怠履歴CSV保存エラー: {str(e)}")
+                st.error(f"勤怠履歴CSV保存エラー: {str(e)}")
                 st.stop()
             
             # 保存されたファイルの最終確認
-            st.info("📁 保存されたファイルの最終確認:")
+            st.info("保存されたファイルの最終確認:")
             all_files = os.listdir(indir)
             # 大文字小文字を区別しないCSVファイル検出
             csv_files = [f for f in all_files if f.lower().endswith('.csv')]
@@ -601,37 +572,18 @@ with tab1:
                     
                     if df is not None:
                         service_data_list.append(df)
-                        st.success(f"✅ サービス実績データ読み込み成功: {service_file} ({len(df)}行)")
-                    else:
-                        st.warning(f"⚠️ サービス実績データ読み込み失敗: {service_file}")
                         
                 except Exception as e:
-                    st.error(f"❌ サービス実績データ読み込みエラー: {service_file} -> {str(e)}")
+                    st.error(f"読み込みエラー: {service_file}")
             
-            # セッション状態に保存
             st.session_state.service_data_list = service_data_list
-            st.info(f"📊 セッション状態に保存されたサービス実績データ: {len(service_data_list)}ファイル")
-            
-            # 保存状況の検証
-            st.info(f"📊 ファイル分類結果:")
-            st.write(f"• サービス実態CSVファイル: {len(actual_service_files)}件")
-            for sf in actual_service_files:
-                st.write(f"  - {sf}")
-            st.write(f"• 勤怠履歴CSVファイル: {len(actual_attendance_files)}件")
-            for af in actual_attendance_files:
-                st.write(f"  - {af}")
             
             if len(actual_service_files) == 0:
-                st.error("❌ サービス実態CSVファイルが1つも保存されませんでした。")
-                st.error("🔍 デバッグ情報:")
-                st.write(f"• 期待されたサービス実態ファイル数: {len(svc_files)}")
-                st.write(f"• 保存成功と報告されたファイル数: {len(saved_service_files)}")
-                st.write(f"• 実際にディレクトリに存在するファイル数: {len(actual_service_files)}")
-                st.write(f"• 作業ディレクトリ: {indir}")
+                st.error("サービス実態CSVファイルが保存されませんでした")
                 st.stop()
             
             if len(actual_attendance_files) == 0:
-                st.error("❌ 勤怠履歴CSVファイルが保存されませんでした。")
+                st.error("勤怠履歴CSVファイルが保存されませんでした")
                 st.stop()
 
             # コマンド組み立て
@@ -651,30 +603,12 @@ with tab1:
             # 実行
             proc = subprocess.run(cmd, capture_output=True, text=True)
             if proc.returncode != 0:
-                st.error("処理でエラーが発生しました。詳細なエラー情報を確認してください。")
-                
-                # エラーの詳細情報を表示
-                with st.expander("🔍 詳細なエラー情報", expanded=True):
+                st.error("処理エラーが発生しました")
+                with st.expander("エラー詳細", expanded=True):
                     if proc.stderr:
-                        st.markdown("**標準エラー出力 (stderr):**")
                         st.code(proc.stderr)
                     if proc.stdout:
-                        st.markdown("**標準出力 (stdout):**")
                         st.code(proc.stdout)
-                    
-                    st.markdown("**実行されたコマンド:**")
-                    st.code(" ".join(cmd))
-                    
-                    st.markdown("**入力ファイル一覧:**")
-                    try:
-                        for file in os.listdir(indir):
-                            if file.endswith('.csv'):
-                                file_path = os.path.join(indir, file)
-                                file_size = os.path.getsize(file_path)
-                                st.write(f"• {file} ({file_size} bytes)")
-                    except Exception as e:
-                        st.write(f"ファイル一覧の取得に失敗: {e}")
-                
                 st.stop()
 
             # 出力（result_*.csv と diagnostics）を収集
@@ -700,76 +634,34 @@ with tab1:
             else:
                 st.session_state.summary_df = None
             
-            st.success("処理が完了しました！他のタブで結果を確認してください。")
+            st.success("処理完了")
 
-# タブ2: 検出サマリー
+# タブ2: ②エラー確認（元の詳細データタブ）
 with tab2:
-    st.header("📊 検出サマリー")
-    
-    if st.session_state.processing_complete:
-        if st.session_state.summary_df is not None:
-            st.dataframe(st.session_state.summary_df, use_container_width=True)
-        else:
-            st.info("結果CSVが見つかりませんでした。入力ファイルの形式・エンコーディングをご確認ください。")
-    else:
-        st.info("まず「ファイルアップロード」タブでCSVファイルをアップロードし、エラーチェックを実行してください。")
-
-# タブ3: 詳細データ
-with tab3:
-    st.header("📋 詳細データ（グリッド表示）")
+    st.header("②エラー確認")
     
     if st.session_state.processing_complete and st.session_state.result_paths:
         try:
             grid_df = prepare_grid_data(st.session_state.result_paths)
             
             if not grid_df.empty:
-                # メインのグリッド表示を最優先で配置
-                st.markdown("### 📋 データグリッド")
-                
-                # 基本的なフィルタリング（常に表示）
-                col_filter1, col_filter2, col_filter3 = st.columns(3)
+                col_filter1, col_filter2 = st.columns(2)
                 
                 with col_filter1:
-                    error_filter = st.selectbox(
-                        "エラーフィルタ",
-                        options=["すべて", "エラーのみ", "正常のみ"],
-                        index=0,
-                        key="error_filter"
-                    )
+                    error_filter = st.selectbox("エラー", ["すべて", "エラーのみ", "正常のみ"], key="error_filter")
                 
                 with col_filter2:
-                    category_filter = st.selectbox(
-                        "カテゴリフィルタ",
-                        options=["すべて"] + [cat for cat in grid_df['カテゴリ'].unique() if pd.notna(cat) and cat != ''],
-                        index=0,
-                        key="category_filter"
-                    )
+                    category_filter = st.selectbox("カテゴリ", ["すべて"] + [cat for cat in grid_df['カテゴリ'].unique() if pd.notna(cat) and cat != ''], key="category_filter")
                 
-                with col_filter3:
-                    # 空のカラム（レイアウト調整用）
-                    st.write("")
-                
-                # 従業員と利用者のフィルタリング（デフォルトで表示）
-                st.markdown("#### 👥 従業員・利用者フィルタ")
                 col_staff, col_user = st.columns(2)
                 
                 with col_staff:
                     available_staff = [staff for staff in grid_df['担当所員'].dropna().unique() if staff != '']
-                    selected_staff = st.multiselect(
-                        "担当所員で絞り込み",
-                        options=sorted(available_staff),
-                        default=[],
-                        key="staff_filter_main"
-                    )
+                    selected_staff = st.multiselect("担当所員", sorted(available_staff), key="staff_filter_main")
                 
                 with col_user:
                     available_users = [user for user in grid_df['利用者名'].dropna().unique() if user != '']
-                    selected_users = st.multiselect(
-                        "利用者で絞り込み",
-                        options=sorted(available_users),
-                        default=[],
-                        key="user_filter_main"
-                    )
+                    selected_users = st.multiselect("利用者", sorted(available_users), key="user_filter_main")
                 
                 # フィルタリング処理
                 filtered_df = grid_df.copy()
@@ -788,170 +680,41 @@ with tab3:
                 if selected_users:
                     filtered_df = filtered_df[filtered_df['利用者名'].isin(selected_users)]
                 
-                # 基本統計情報（コンパクトに表示）
                 total_records = len(grid_df)
                 error_records = len(grid_df[grid_df['エラー'] == '◯'])
                 filtered_records = len(filtered_df)
                 
-                col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                col_stat1, col_stat2, col_stat3 = st.columns(3)
                 with col_stat1:
                     st.metric("総件数", total_records)
                 with col_stat2:
                     st.metric("エラー件数", error_records)
                 with col_stat3:
                     st.metric("表示件数", filtered_records)
-                with col_stat4:
-                    error_rate = (error_records / total_records * 100) if total_records > 0 else 0
-                    st.metric("エラー率", f"{error_rate:.1f}%")
                 
-                # メインのデータグリッド表示（大きく表示）
-                st.dataframe(
-                    filtered_df,
-                    use_container_width=True,
-                    height=600,  # 高さを大きくして見やすく
-                    hide_index=True
-                )
-                
-                # 追加機能をトグルで表示/非表示
-                show_advanced = st.toggle("🔧 詳細機能を表示", value=False, key="show_advanced_features")
-                
-                if show_advanced:
-                    st.markdown("---")
-                    
-                    # ビュー選択セクション
-                    st.markdown("### 📊 表示ビュー選択")
-                    view_type = st.radio(
-                        "表示方法を選択してください",
-                        options=["全体表示", "利用者別表示", "従業員別表示", "詳細分析表示", "カスタム表示"],
-                        horizontal=True,
-                        key="view_type"
-                    )
-                    
-                    # 詳細統計情報
-                    st.markdown("### 📈 詳細統計")
-                    col_detail1, col_detail2, col_detail3, col_detail4 = st.columns(4)
-                    
-                    with col_detail1:
-                        unique_users = len(grid_df['利用者名'].dropna().unique())
-                        st.metric("利用者数", unique_users)
-                    
-                    with col_detail2:
-                        # 重複関連統計
-                        overlap_records = len(grid_df[grid_df['重複時間'] > 0])
-                        total_overlap_minutes = grid_df['重複時間'].sum()
-                        st.metric("重複件数", overlap_records)
-                        st.metric("総重複時間", f"{total_overlap_minutes}分")
-                    
-                    with col_detail3:
-                        # 超過関連統計
-                        excess_records = len(grid_df[grid_df['超過時間'] > 0])
-                        total_excess_minutes = grid_df['超過時間'].sum()
-                        st.metric("超過件数", excess_records)
-                        st.metric("総超過時間", f"{total_excess_minutes}分")
-                    
-                    with col_detail4:
-                        # 職員関連統計
-                        unique_staff = len(grid_df['担当所員'].dropna().unique())
-                        st.metric("職員数", unique_staff)
-                
-                    # ビュー別の詳細フィルタリング
-                    if view_type == "利用者別表示":
-                        st.markdown("### 👥 利用者選択")
-                        available_users = [user for user in grid_df['利用者名'].dropna().unique() if user != '']
-                        if available_users:
-                            selected_users = st.multiselect(
-                                "表示する利用者を選択してください（複数選択可）",
-                                options=sorted(available_users),
-                                default=[],
-                                key="user_filter_advanced"
-                            )
-                            if selected_users:
-                                filtered_df = filtered_df[filtered_df['利用者名'].isin(selected_users)]
-                        else:
-                            st.warning("利用者データが見つかりません。")
-                            
-                    elif view_type == "従業員別表示":
-                        st.markdown("### 👨‍💼 従業員選択")
-                        available_staff = [staff for staff in grid_df['担当所員'].dropna().unique() if staff != '']
-                        if available_staff:
-                            selected_staff = st.multiselect(
-                                "表示する従業員を選択してください（複数選択可）",
-                                options=sorted(available_staff),
-                                default=[],
-                                key="staff_filter_advanced"
-                            )
-                            if selected_staff:
-                                filtered_df = filtered_df[filtered_df['担当所員'].isin(selected_staff)]
-                        else:
-                            st.warning("従業員データが見つかりません。")
-                            
-                    elif view_type == "詳細分析表示":
-                        st.markdown("### 🔍 詳細分析表示")
-                        
-                        # 分析タイプ選択
-                        analysis_type = st.selectbox(
-                            "分析タイプを選択",
-                            options=["重複分析", "勤怠超過分析", "時間帯分析", "職員負荷分析"],
-                            key="analysis_type"
-                        )
-                        
-                        if analysis_type == "重複分析":
-                            show_overlap_analysis(filtered_df)
-                        elif analysis_type == "勤怠超過分析":
-                            show_attendance_excess_analysis(filtered_df)
-                        elif analysis_type == "時間帯分析":
-                            show_time_slot_analysis(filtered_df)
-                        elif analysis_type == "職員負荷分析":
-                            show_staff_workload_analysis(filtered_df)
-                            
-                    elif view_type == "カスタム表示":
-                        st.markdown("### 🔧 カスタムフィルタ")
-                        
-                        # 複合条件フィルタ
-                        col_custom1, col_custom2 = st.columns(2)
-                        with col_custom1:
-                            custom_users = st.multiselect(
-                                "利用者選択",
-                                options=sorted([user for user in grid_df['利用者名'].dropna().unique() if user != '']),
-                                key="custom_users"
-                            )
-                        with col_custom2:
-                            custom_staff = st.multiselect(
-                                "従業員選択",
-                                options=sorted([staff for staff in grid_df['担当所員'].dropna().unique() if staff != '']),
-                                key="custom_staff"
-                            )
-                        
-                        # カスタムフィルタ適用
-                        if custom_users:
-                            filtered_df = filtered_df[filtered_df['利用者名'].isin(custom_users)]
-                        if custom_staff:
-                            filtered_df = filtered_df[filtered_df['担当所員'].isin(custom_staff)]
-                    
-                    # 詳細機能用のフィルタ済みデータグリッド表示
-                    st.markdown("### 📋 フィルタ済みデータグリッド")
-                    st.dataframe(
-                        filtered_df,
-                        use_container_width=True,
-                        height=400,
-                        hide_index=True
-                    )
+                st.dataframe(filtered_df, use_container_width=True, height=600, hide_index=True)
                 
             else:
-                st.info("グリッド表示用のデータが見つかりませんでした。")
+                st.info("データが見つかりません")
         except Exception as e:
-            st.error(f"グリッド表示でエラーが発生しました: {str(e)}")
+            st.error(f"エラー: {str(e)}")
     else:
-        st.info("まず「ファイルアップロード」タブでCSVファイルをアップロードし、エラーチェックを実行してください。")
+        st.info("ファイルをアップロードしてエラーチェックを実行してください")
 
-# タブ4: ダウンロード・最適化
+# タブ3: ③勤怠CSVダウンロード（元の最適勤怠データ出力タブ）
+with tab3:
+    st.header("③勤怠CSVダウンロード")
+    # 修正済みの関数を使用
+    show_optimal_attendance_export()
+
+# タブ4: ④エラーダウンロード（元のダウンロードタブ）
 with tab4:
-    st.header("💾 ダウンロード・最適化")
+    st.header("④エラーダウンロード")
     
     if st.session_state.processing_complete:
         # 個別ダウンロード
         if st.session_state.result_paths:
-            st.subheader("📥 結果CSVダウンロード")
+            st.subheader("結果CSV")
             for p in sorted(st.session_state.result_paths):
                 with open(p, "rb") as f:
                     st.download_button(
@@ -963,7 +726,7 @@ with tab4:
 
         # 診断ダウンロード
         if st.session_state.diagnostic_paths and generate_diagnostics:
-            st.subheader("🔍 診断CSVダウンロード (diagnostics)")
+            st.subheader("診断CSV")
             for p in sorted(st.session_state.diagnostic_paths):
                 with open(p, "rb") as f:
                     st.download_button(
@@ -975,7 +738,7 @@ with tab4:
 
         # まとめてZIP
         if st.session_state.result_paths:
-            st.subheader("📦 一括ダウンロード（ZIP）")
+            st.subheader("一括ZIP")
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 for p in st.session_state.result_paths:
@@ -988,18 +751,13 @@ with tab4:
             # タイムスタンプを取得
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             st.download_button(
-                label="結果一式をZIPでダウンロード",
+                label="ZIP一括ダウンロード",
                 data=buf,
                 file_name=f"results_{ts}.zip",
                 mime="application/zip",
             )
 
     else:
-        st.info("まず「ファイルアップロード」タブでCSVファイルをアップロードし、エラーチェックを実行してください。")
+        st.info("ファイルをアップロードしてエラーチェックを実行してください")
 
-# タブ5: 最適勤怠データ出力
-with tab5:
-    # 修正済みの関数を使用
-    show_optimal_attendance_export()
 
-st.caption("※ このUIはローカルの src.py を呼び出して実行します。アプリと同じフォルダに src.py を置いてください。")

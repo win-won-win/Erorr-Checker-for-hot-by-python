@@ -579,11 +579,38 @@ with tab1:
                 file_size = os.path.getsize(file_path)
                 st.write(f"• {csv_file} ({file_size} bytes)")
                 
-                # ファイルの分類
-                if csv_file == att_file.name:
-                    actual_attendance_files.append(csv_file)
-                else:
+                # サービス実績ファイルと勤怠履歴ファイルを分類
+                if csv_file.lower() != att_file.name.lower():
                     actual_service_files.append(csv_file)
+                else:
+                    actual_attendance_files.append(csv_file)
+            
+            # サービス実績データをセッション状態に保存
+            service_data_list = []
+            for service_file in actual_service_files:
+                try:
+                    file_path = os.path.join(indir, service_file)
+                    # 複数のエンコーディングを試行
+                    df = None
+                    for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
+                        try:
+                            df = pd.read_csv(file_path, encoding=encoding)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    
+                    if df is not None:
+                        service_data_list.append(df)
+                        st.success(f"✅ サービス実績データ読み込み成功: {service_file} ({len(df)}行)")
+                    else:
+                        st.warning(f"⚠️ サービス実績データ読み込み失敗: {service_file}")
+                        
+                except Exception as e:
+                    st.error(f"❌ サービス実績データ読み込みエラー: {service_file} -> {str(e)}")
+            
+            # セッション状態に保存
+            st.session_state.service_data_list = service_data_list
+            st.info(f"📊 セッション状態に保存されたサービス実績データ: {len(service_data_list)}ファイル")
             
             # 保存状況の検証
             st.info(f"📊 ファイル分類結果:")
@@ -972,151 +999,7 @@ with tab4:
 
 # タブ5: 最適勤怠データ出力
 with tab5:
-    st.header("🎯 最適勤怠データ出力")
-    
-    # 勤怠データの読み込み確認
-    try:
-        # セッション状態から勤怠履歴CSVファイルのパスを動的に取得
-        if st.session_state.processing_complete and st.session_state.workdir:
-            # 作業ディレクトリ内のinputフォルダから勤怠履歴CSVを探す
-            input_dir = os.path.join(st.session_state.workdir, "input")
-            attendance_file_path = None
-            
-            if os.path.exists(input_dir):
-                for filename in os.listdir(input_dir):
-                    if filename.endswith('.csv') and not filename.startswith('result_'):
-                        # サービス実態CSVではない可能性が高いファイルを勤怠履歴CSVとして判定
-                        if '勤怠' in filename or 'チェック' in filename or 'attendance' in filename.lower():
-                            attendance_file_path = os.path.join(input_dir, filename)
-                            break
-                
-                # 見つからない場合は、最初に見つかったCSVファイルを使用
-                if not attendance_file_path:
-                    csv_files = [f for f in os.listdir(input_dir) if f.endswith('.csv') and not f.startswith('result_')]
-                    if csv_files:
-                        # サービス実態CSVファイル数を推定して、残りを勤怠履歴CSVとする
-                        service_files = [f for f in csv_files if not ('勤怠' in f or 'チェック' in f or 'attendance' in f.lower())]
-                        attendance_files = [f for f in csv_files if f not in service_files]
-                        if attendance_files:
-                            attendance_file_path = os.path.join(input_dir, attendance_files[0])
-            
-            if not attendance_file_path:
-                raise FileNotFoundError("勤怠履歴CSVファイルが見つかりません。")
-        else:
-            raise FileNotFoundError("処理が完了していないか、作業ディレクトリが見つかりません。")
-        
-        attendance_df = pd.read_csv(attendance_file_path, encoding='cp932')
-        
-        # 利用可能な従業員リストを取得
-        available_employees = []
-        for _, row in attendance_df.iterrows():
-            emp_name = str(row.get('名前', '')).strip()
-            if emp_name and emp_name not in available_employees:
-                available_employees.append(emp_name)
-        
-        if not available_employees:
-            st.error("勤怠データから従業員情報を取得できませんでした。")
-        else:
-            st.success(f"勤怠データを読み込みました。利用可能な従業員: {len(available_employees)}名")
-            
-            # 対象月の選択
-            col1, col2 = st.columns(2)
-            with col1:
-                target_year = st.selectbox("対象年", range(2023, 2026), index=2, key="export_year")
-            with col2:
-                target_month = st.selectbox("対象月", range(1, 13), index=datetime.now().month - 1, key="export_month")
-            
-            target_month_str = f"{target_year}-{target_month:02d}"
-            
-            # 従業員選択
-            st.markdown("### 👥 出力対象従業員の選択")
-            
-            # 全選択・全解除ボタン
-            col1, col2, col3 = st.columns([1, 1, 2])
-            with col1:
-                if st.button("全員選択", key="select_all_export"):
-                    st.session_state.selected_employees_export = available_employees.copy()
-                    st.rerun()
-            with col2:
-                if st.button("選択解除", key="clear_all_export"):
-                    st.session_state.selected_employees_export = []
-                    st.rerun()
-            
-            # セッション状態の初期化
-            if 'selected_employees_export' not in st.session_state:
-                st.session_state.selected_employees_export = []
-            
-            # 従業員チェックボックス
-            st.markdown("#### チェックボックスで従業員を選択してください")
-            
-            # 3列レイアウトでチェックボックスを表示
-            cols = st.columns(3)
-            for i, employee in enumerate(sorted(available_employees)):
-                with cols[i % 3]:
-                    is_selected = employee in st.session_state.selected_employees_export
-                    if st.checkbox(employee, value=is_selected, key=f"emp_check_tab5_{i}"):
-                        if employee not in st.session_state.selected_employees_export:
-                            st.session_state.selected_employees_export.append(employee)
-                    else:
-                        if employee in st.session_state.selected_employees_export:
-                            st.session_state.selected_employees_export.remove(employee)
-            
-            # 選択された従業員の表示
-            if st.session_state.selected_employees_export:
-                st.info(f"選択された従業員: {len(st.session_state.selected_employees_export)}名")
-                with st.expander("選択された従業員一覧"):
-                    for i, emp in enumerate(st.session_state.selected_employees_export, 1):
-                        st.write(f"{i}. {emp}")
-            
-            # CSV出力ボタン
-            if st.session_state.selected_employees_export:
-                st.markdown("### 📥 CSV出力")
-                
-                if st.button("🎯 最適勤怠データをCSV出力", type="primary", key="export_csv_tab5"):
-                    with st.spinner("CSV生成中..."):
-                        try:
-                            # jinjer形式CSVを生成
-                            csv_content = generate_jinjer_csv(
-                                st.session_state.selected_employees_export,
-                                target_month_str,
-                                attendance_df
-                            )
-                            
-                            # ダウンロードボタン
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            filename = f"最適勤怠データ_{target_month_str}_{timestamp}.csv"
-                            
-                            st.download_button(
-                                label="📥 CSVファイルをダウンロード",
-                                data=csv_content.encode('shift_jis', errors='ignore'),
-                                file_name=filename,
-                                mime="text/csv",
-                                help="jinjer形式（133列）の最適勤怠データCSVファイル",
-                                key="download_csv_tab5"
-                            )
-                            
-                            st.success(f"✅ CSV生成完了！{len(st.session_state.selected_employees_export)}名の勤怠データを出力しました。")
-                            
-                            # 生成されたCSVの詳細情報
-                            lines = csv_content.count('\n') - 1  # ヘッダー行を除く
-                            st.info(f"📊 出力詳細: {lines}行のデータ（ヘッダー含む{lines + 1}行）")
-                            
-                        except Exception as e:
-                            st.error(f"CSV生成エラー: {str(e)}")
-            else:
-                st.warning("出力対象の従業員を選択してください。")
-                
-    except FileNotFoundError as e:
-        st.error("勤怠履歴CSVファイルが見つかりません。")
-        st.info("まず「ファイルアップロード」タブでCSVファイルをアップロードし、エラーチェックを実行してください。")
-        with st.expander("🔍 詳細情報"):
-            st.write(f"エラー詳細: {str(e)}")
-            if st.session_state.workdir:
-                st.write(f"作業ディレクトリ: {st.session_state.workdir}")
-    except Exception as e:
-        st.error(f"データ読み込みエラー: {str(e)}")
-        with st.expander("🔍 詳細情報"):
-            st.write(f"エラータイプ: {type(e).__name__}")
-            st.write(f"エラー詳細: {str(e)}")
+    # 修正済みの関数を使用
+    show_optimal_attendance_export()
 
 st.caption("※ このUIはローカルの src.py を呼び出して実行します。アプリと同じフォルダに src.py を置いてください。")

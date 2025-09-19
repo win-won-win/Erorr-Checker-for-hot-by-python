@@ -10,6 +10,7 @@ import sys
 from datetime import datetime
 import calendar
 from typing import List, Dict, Any
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 
 # アイコン定義（洗練されたUnicodeアイコン）
 ICONS = {
@@ -337,6 +338,67 @@ def collect_summary(result_paths):
         })
     return pd.DataFrame(summary_rows)
 
+def extract_facility_name_from_filename(filename):
+    """
+    ファイル名から事業所名を抽出する関数
+    先頭からのひらがな・漢字・カタカナまたはスペースまでを認識
+    例: 'さくら202508)3.csv' -> 'さくら'
+    例: 'ほっと202508)3.csv' -> 'ほっと'
+    例: 'さくら　2020508 3.csv' -> 'さくら'
+    """
+    import re
+    
+    # ファイル名から拡張子を除去
+    base_name = os.path.splitext(filename)[0]
+    
+    # result_ プレフィックスを除去
+    if base_name.startswith('result_'):
+        base_name = base_name[7:]  # 'result_' を除去
+    
+    # 先頭からのひらがな・カタカナ・漢字・英字を抽出（スペースまたは数字・記号で終了）
+    # ひらがな: あ-ん (U+3042-U+3093)
+    # カタカナ: ア-ン (U+30A2-U+30F3)
+    # 漢字: 一-龯 (U+4E00-U+9FAF)
+    # 英字: a-zA-Z
+    pattern = r'^([あ-んア-ン一-龯a-zA-Zａ-ｚＡ-Ｚ]+)'
+    
+    match = re.match(pattern, base_name.strip())
+    if match:
+        facility_name = match.group(1).strip()
+        return facility_name
+    
+    # フォールバック: スペースで区切られた最初の部分
+    parts = re.split(r'[　\s]+', base_name.strip())
+    if parts and parts[0]:
+        # 最初の部分から日本語・英字のみを抽出
+        first_part = parts[0]
+        clean_match = re.match(r'^([あ-んア-ン一-龯a-zA-Zａ-ｚＡ-Ｚ]+)', first_part)
+        if clean_match:
+            return clean_match.group(1).strip()
+        return first_part.strip()
+    
+    # 最終フォールバック: ファイル名をそのまま返す
+    return base_name.strip()
+
+def extract_facility_names_from_partner_facilities(partner_facilities_str):
+    """
+    重複相手施設の文字列から事業所名のリストを抽出する関数
+    例: 'result_さくら　2020508 3.csv，result_ひまわり 456.csv' -> ['さくら', 'ひまわり']
+    """
+    if not partner_facilities_str or pd.isna(partner_facilities_str):
+        return []
+    
+    facility_names = []
+    # カンマで分割
+    facilities = [f.strip() for f in str(partner_facilities_str).split('，') if f.strip()]
+    
+    for facility in facilities:
+        facility_name = extract_facility_name_from_filename(facility)
+        if facility_name and facility_name not in facility_names:
+            facility_names.append(facility_name)
+    
+    return facility_names
+
 def prepare_grid_data(result_paths):
     """
     result_*.csvファイルからグリッド表示用のDataFrameを作成
@@ -353,15 +415,38 @@ def prepare_grid_data(result_paths):
             except UnicodeDecodeError:
                 df = pd.read_csv(p, encoding="utf-8")
         
+        # ファイル名から事業所名を抽出
+        filename = os.path.basename(p)
+        facility_name = extract_facility_name_from_filename(filename)
+        
         # 指定された順序でカラムを構築
         for idx, row in df.iterrows():
+            # 重複相手施設から事業所名を抽出（従来の方法）
+            partner_facilities = row.get('重複相手施設', '')
+            duplicate_facility_names = extract_facility_names_from_partner_facilities(partner_facilities)
+            
+            # 重複相手施設が空の場合は、ファイル名から抽出した事業所名を使用
+            if not duplicate_facility_names and facility_name:
+                # エラーがある行のみ事業所名を表示
+                if row.get('エラー', '') == '◯':
+                    duplicate_facility_display = facility_name
+                else:
+                    duplicate_facility_display = ''
+            else:
+                duplicate_facility_display = '，'.join(duplicate_facility_names) if duplicate_facility_names else ''
+            
+            # デバッグ出力（最初の5行のみ）
+            if idx < 5:
+                print(f"デバッグ - ファイル{filename}: 行{idx}, エラー='{row.get('エラー', '')}', 事業所名='{facility_name}', 表示用='{duplicate_facility_display}'")
+            
             grid_row = {
-                # 指定された順序: エラー　カテゴリ　代替職員リスト　担当所員　利用者名　日付　開始時間　終了時間　サービス詳細　重複時間　超過時間
+                # 指定された順序: エラー　カテゴリ　代替職員リスト　担当所員　利用者名　重複エラー事業所名　日付　開始時間　終了時間　サービス詳細　重複時間　超過時間
                 'エラー': row.get('エラー', ''),
                 'カテゴリ': row.get('カテゴリ', ''),
                 '代替職員リスト': row.get('代替職員リスト', 'ー'),
                 '担当所員': row.get('担当所員', ''),
                 '利用者名': row.get('利用者名', ''),
+                '重複エラー事業所名': duplicate_facility_display,
                 '日付': row.get('日付', ''),
                 '開始時間': row.get('開始時間', ''),
                 '終了時間': row.get('終了時間', ''),
@@ -379,9 +464,9 @@ def prepare_grid_data(result_paths):
             }
             grid_data.append(grid_row)
     
-    # 指定された順序でDataFrameを作成
+    # 指定された順序でDataFrameを作成（利用者名の次に重複エラー事業所名を配置）
     column_order = [
-        'エラー', 'カテゴリ', '代替職員リスト', '担当所員', '利用者名',
+        'エラー', 'カテゴリ', '代替職員リスト', '担当所員', '利用者名', '重複エラー事業所名',
         '日付', '開始時間', '終了時間', 'サービス詳細', '重複時間', '超過時間',
         'カバー状況', 'エラー職員勤務時間', '代替職員勤務時間', '勤務時間詳細',
         '勤務時間外詳細', '未カバー区間', '勤務区間数'
@@ -389,6 +474,84 @@ def prepare_grid_data(result_paths):
     
     df = pd.DataFrame(grid_data)
     return df[column_order] if not df.empty else pd.DataFrame(columns=column_order)
+
+def create_styled_grid(df):
+    """
+    条件付き背景色を適用したAgGridを作成する関数
+    - 「さくら」を含む行：薄い赤の背景色 (#ffebee)
+    - 「ほっと」を含む行：薄い青の背景色 (#e3f2fd)
+    """
+    # GridOptionsBuilderを使用してグリッドオプションを設定
+    gb = GridOptionsBuilder.from_dataframe(df)
+    
+    # 基本設定
+    gb.configure_pagination(paginationAutoPageSize=True)
+    gb.configure_side_bar()
+    gb.configure_selection('single', use_checkbox=False)
+    gb.configure_default_column(
+        groupable=True,
+        value=True,
+        enableRowGroup=True,
+        aggFunc='sum',
+        editable=False,
+        resizable=True,
+        sortable=True,
+        filter=True
+    )
+    
+    # 条件付きスタイリングのJavaScriptコード
+    cell_style_jscode = JsCode("""
+    function(params) {
+        const facilityName = params.data['重複エラー事業所名'];
+        if (facilityName) {
+            // 正確に「さくら」または「ほっと」に一致する場合のみ色を適用
+            if (facilityName === 'さくら' || facilityName.includes('さくら')) {
+                // 「さくら」の場合：薄い赤
+                return {
+                    'backgroundColor': '#ffebee',
+                    'color': 'black'
+                };
+            } else if (facilityName === 'ほっと' || facilityName.includes('ほっと')) {
+                // 「ほっと」の場合：薄い青
+                return {
+                    'backgroundColor': '#e3f2fd',
+                    'color': 'black'
+                };
+            }
+        }
+        return {};
+    }
+    """)
+    
+    # 行全体にスタイルを適用
+    row_style_jscode = JsCode("""
+    function(params) {
+        const facilityName = params.data['重複エラー事業所名'];
+        if (facilityName) {
+            // 正確に「さくら」または「ほっと」に一致する場合のみ色を適用
+            if (facilityName === 'さくら' || facilityName.includes('さくら')) {
+                // 「さくら」の場合：薄い赤
+                return {'backgroundColor': '#ffebee'};
+            } else if (facilityName === 'ほっと' || facilityName.includes('ほっと')) {
+                // 「ほっと」の場合：薄い青
+                return {'backgroundColor': '#e3f2fd'};
+            }
+        }
+        return {};
+    }
+    """)
+    
+    # 各カラムにセルスタイルを適用
+    for col in df.columns:
+        gb.configure_column(col, cellStyle=cell_style_jscode)
+    
+    # 行スタイルを設定
+    gb.configure_grid_options(getRowStyle=row_style_jscode)
+    
+    # グリッドオプションを構築
+    gridOptions = gb.build()
+    
+    return gridOptions
 
 # ページ設定
 st.set_page_config(page_title="重複チェッカー for hot", layout="wide")
@@ -692,7 +855,25 @@ with tab2:
                 with col_stat3:
                     st.metric("表示件数", filtered_records)
                 
-                st.dataframe(filtered_df, use_container_width=True, height=600, hide_index=True)
+                # 条件付きスタイリングを適用したAgGridを表示
+                if not filtered_df.empty:
+                    gridOptions = create_styled_grid(filtered_df)
+                    
+                    # AgGridを表示
+                    grid_response = AgGrid(
+                        filtered_df,
+                        gridOptions=gridOptions,
+                        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+                        update_mode=GridUpdateMode.SELECTION_CHANGED,
+                        fit_columns_on_grid_load=False,
+                        enable_enterprise_modules=False,
+                        height=600,
+                        width='100%',
+                        reload_data=False,
+                        allow_unsafe_jscode=True
+                    )
+                else:
+                    st.info("フィルタ条件に一致するデータがありません")
                 
             else:
                 st.info("データが見つかりません")

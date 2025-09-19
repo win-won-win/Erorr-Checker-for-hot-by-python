@@ -69,6 +69,8 @@ class OverlapInfo:
     facility2: str
     staff1: str
     staff2: str
+    user1: str  # 利用者名1
+    user2: str  # 利用者名2
     start1: datetime
     end1: datetime
     start2: datetime
@@ -527,6 +529,8 @@ def find_overlaps_with_details(df1: pd.DataFrame, df2: pd.DataFrame,
                         facility2=facility2,
                         staff1=row1["_担当所員"],
                         staff2=row2["_担当所員"],
+                        user1=row1.get("利用者名", ""),
+                        user2=row2.get("利用者名", ""),
                         start1=s1,
                         end1=e1,
                         start2=s2,
@@ -653,11 +657,34 @@ def update_overlap_details_in_csv(df: pd.DataFrame, idx: int, overlap_info: Over
         staff_list.append(partner_staff)
     df.at[idx, '重複相手担当者'] = "，".join(sorted(staff_list))
     
+    # 重複利用者名の記録（重複相手の利用者名）
+    if '重複利用者名' not in df.columns:
+        df['重複利用者名'] = ""
+    
+    current_users = str(df.at[idx, '重複利用者名'] or "")
+    user_list = [u.strip() for u in current_users.split("，") if u.strip()]
+    partner_user = overlap_info.user2 if overlap_info.idx1 == idx else overlap_info.user1
+    if partner_user and partner_user not in user_list:
+        user_list.append(partner_user)
+    df.at[idx, '重複利用者名'] = "，".join(sorted(user_list))
+    
     current_types = str(df.at[idx, '重複タイプ'] or "")
     types = [t.strip() for t in current_types.split("，") if t.strip()]
     if overlap_info.overlap_type not in types:
         types.append(overlap_info.overlap_type)
     df.at[idx, '重複タイプ'] = "，".join(sorted(types))
+    
+    # 重複サービス時間の記録
+    # 列が存在しない場合は初期化（安全性のため）
+    if '重複サービス時間' not in df.columns:
+        df['重複サービス時間'] = ""
+    
+    overlap_time_str = f"{overlap_info.overlap_start.strftime('%H:%M')}-{overlap_info.overlap_end.strftime('%H:%M')}"
+    current_overlap_times = str(df.at[idx, '重複サービス時間'] or "")
+    overlap_times = [t.strip() for t in current_overlap_times.split("｜") if t.strip()]
+    if overlap_time_str not in overlap_times:
+        overlap_times.append(overlap_time_str)
+    df.at[idx, '重複サービス時間'] = "｜".join(sorted(overlap_times))
 
 def get_representative_work_patterns(work_ivs: List[Interval]) -> List[str]:
     """実際の勤務区間をそのまま文字列として返す（重複除去のみ）"""
@@ -852,7 +879,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         
         # 新規詳細カラムの初期化
         detail_columns = ['重複時間（分）', '超過時間（分）', '重複相手施設', '重複相手担当者',
-                         '重複タイプ', 'カバー状況', '勤務区間数', '詳細ID', '勤務時間詳細',
+                         '重複利用者名', '重複タイプ', '重複サービス時間', 'カバー状況', '勤務区間数', '詳細ID', '勤務時間詳細',
                          'カバー済み区間', '未カバー区間', '勤務時間外詳細']
         
         for col in detail_columns:
@@ -1060,9 +1087,9 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
             if c in out_df.columns:
                 out_df.drop(columns=[c], inplace=True)
 
-        # カラムの並び順を調整（基本3列 + 詳細8列 + その他）
+        # カラムの並び順を調整（基本3列 + 詳細9列 + その他）
         base_cols = [ERR_COL, CAT_COL, ALT_COL]
-        detail_cols = ['重複時間（分）', '超過時間（分）', '重複相手施設', '重複相手担当者',
+        detail_cols = ['重複時間（分）', '重複サービス時間', '超過時間（分）', '重複相手施設', '重複相手担当者',
                       '重複タイプ', 'カバー状況', '勤務区間数', '詳細ID', '勤務時間詳細',
                       'カバー済み区間', '未カバー区間', '勤務時間外詳細']
         other_cols = [c for c in out_df.columns if c not in base_cols + detail_cols]

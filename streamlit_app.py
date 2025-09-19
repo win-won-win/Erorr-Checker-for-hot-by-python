@@ -355,12 +355,13 @@ def extract_facility_name_from_filename(filename):
     if base_name.startswith('result_'):
         base_name = base_name[7:]  # 'result_' を除去
     
-    # 先頭からのひらがな・カタカナ・漢字・英字を抽出（スペースまたは数字・記号で終了）
+    # 先頭からのひらがな・カタカナ・漢字・英字を抽出（数字・記号で終了）
     # ひらがな: あ-ん (U+3042-U+3093)
-    # カタカナ: ア-ン (U+30A2-U+30F3)
+    # カタカナ: ア-ン (U+30A2-U+30F3) + 長音符・中点
     # 漢字: 一-龯 (U+4E00-U+9FAF)
     # 英字: a-zA-Z
-    pattern = r'^([あ-んア-ン一-龯a-zA-Zａ-ｚＡ-Ｚ]+)'
+    # 記号: ー（長音符）、・（中点）
+    pattern = r'^([あ-んア-ンー・一-龯a-zA-Zａ-ｚＡ-Ｚ]+)'
     
     match = re.match(pattern, base_name.strip())
     if match:
@@ -439,14 +440,33 @@ def prepare_grid_data(result_paths):
             if idx < 5:
                 print(f"デバッグ - ファイル{filename}: 行{idx}, エラー='{row.get('エラー', '')}', 事業所名='{facility_name}', 表示用='{duplicate_facility_display}'")
             
+            # 重複利用者名の設定（エラー行のみ重複相手の利用者名を表示）
+            if row.get('エラー', '') == '◯':
+                duplicate_user_name = row.get('重複利用者名', '')
+            else:
+                duplicate_user_name = ''
+            
+            # 重複サービス時間の設定（エラー行のみ表示、NaN値を適切に処理）
+            if row.get('エラー', '') == '◯':
+                service_time = row.get('重複サービス時間', '')
+                # NaN値やnull値を空文字に変換
+                if pd.isna(service_time) or service_time == 'nan':
+                    duplicate_service_time = ''
+                else:
+                    duplicate_service_time = str(service_time) if service_time else ''
+            else:
+                duplicate_service_time = ''
+            
             grid_row = {
-                # 指定された順序: エラー　カテゴリ　代替職員リスト　担当所員　利用者名　重複エラー事業所名　日付　開始時間　終了時間　サービス詳細　重複時間　超過時間
+                # 指定された順序: エラー　カテゴリ　代替職員リスト　担当所員　利用者名　重複利用者名　重複エラー事業所名　重複サービス時間　日付　開始時間　終了時間　サービス詳細　重複時間　超過時間
                 'エラー': row.get('エラー', ''),
                 'カテゴリ': row.get('カテゴリ', ''),
                 '代替職員リスト': row.get('代替職員リスト', 'ー'),
                 '担当所員': row.get('担当所員', ''),
                 '利用者名': row.get('利用者名', ''),
+                '重複利用者名': duplicate_user_name,
                 '重複エラー事業所名': duplicate_facility_display,
+                '重複サービス時間': duplicate_service_time,
                 '日付': row.get('日付', ''),
                 '開始時間': row.get('開始時間', ''),
                 '終了時間': row.get('終了時間', ''),
@@ -466,10 +486,10 @@ def prepare_grid_data(result_paths):
     
     # 指定された順序でDataFrameを作成（利用者名の次に重複エラー事業所名を配置）
     column_order = [
-        'エラー', 'カテゴリ', '代替職員リスト', '担当所員', '利用者名', '重複エラー事業所名',
-        '日付', '開始時間', '終了時間', 'サービス詳細', '重複時間', '超過時間',
-        'カバー状況', 'エラー職員勤務時間', '代替職員勤務時間', '勤務時間詳細',
-        '勤務時間外詳細', '未カバー区間', '勤務区間数'
+        'エラー', 'カテゴリ', '代替職員リスト', '担当所員', '利用者名', '重複利用者名',
+        '重複エラー事業所名', '重複サービス時間', '日付', '開始時間', '終了時間',
+        'サービス詳細', '重複時間', '超過時間', 'カバー状況', 'エラー職員勤務時間',
+        '代替職員勤務時間', '勤務時間詳細', '勤務時間外詳細', '未カバー区間', '勤務区間数'
     ]
     
     df = pd.DataFrame(grid_data)
@@ -541,9 +561,21 @@ def create_styled_grid(df):
     }
     """)
     
-    # 各カラムにセルスタイルを適用
+    # 各カラムにセルスタイルを適用し、特定の列に幅を設定
     for col in df.columns:
         gb.configure_column(col, cellStyle=cell_style_jscode)
+    
+    # 新しく追加した列の幅を設定
+    if '重複利用者名' in df.columns:
+        gb.configure_column('重複利用者名', width=120)
+    if '重複サービス時間' in df.columns:
+        gb.configure_column('重複サービス時間', width=150)
+    
+    # その他の重要な列の幅も調整
+    if '重複エラー事業所名' in df.columns:
+        gb.configure_column('重複エラー事業所名', width=150)
+    if '利用者名' in df.columns:
+        gb.configure_column('利用者名', width=120)
     
     # 行スタイルを設定
     gb.configure_grid_options(getRowStyle=row_style_jscode)

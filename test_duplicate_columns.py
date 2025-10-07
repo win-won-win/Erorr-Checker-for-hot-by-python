@@ -122,9 +122,10 @@ def test_duplicate_columns_functionality():
         
         # 期待される列の存在確認
         expected_columns = [
-            'エラー', 'カテゴリ', '代替職員リスト', '担当所員', '利用者名', 
-            '重複利用者名', '重複エラー事業所名', '重複サービス時間', 
-            '日付', '開始時間', '終了時間', 'サービス詳細', '重複時間', '超過時間'
+            '代替従業員リスト', '重複エラー事業所名', '利用者名', '日付', '開始時間',
+            '終了時間', '担当所員', 'サービス詳細', '重複利用者名', '重複サービス時間',
+            '重複時間', '懲戒時間', 'エラー職員勤務時間', '代替職員勤務時間',
+            '勤務時間詳細', '勤務時間外詳細', '未カバー区間'
         ]
         
         missing_columns = [col for col in expected_columns if col not in grid_df.columns]
@@ -206,7 +207,7 @@ def test_duplicate_columns_functionality():
         
         # サンプルデータの表示
         print("\n--- サンプルデータ（最初の5行） ---")
-        display_cols = ['エラー', '利用者名', '重複利用者名', '重複エラー事業所名', '重複サービス時間']
+        display_cols = ['エラー', '利用者名', '重複利用者名', '重複エラー事業所名', '重複サービス時間', '懲戒時間']
         print(grid_df[display_cols].head().to_string())
         
         return True

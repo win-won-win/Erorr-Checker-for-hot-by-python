@@ -1272,6 +1272,7 @@ def show_optimal_attendance_export():
         st.markdown("### 📥 CSV出力")
         
         st.markdown("#### 🎯 最適勤怠データCSV")
+        st.caption("選択した従業員の勤怠データをjinjer形式でまとめてダウンロードします。")
         if st.session_state.selected_employees_export:
             if st.button("🎯 最適勤怠データをCSV出力", type="primary", key="export_csv"):
                 with st.spinner("CSV生成中..."):
@@ -1298,6 +1299,8 @@ def show_optimal_attendance_export():
                         st.error(f"CSV生成エラー: {str(e)}")
         else:
             st.info("従業員を選択すると、個別の最適勤怠データCSVを生成できます。")
+
+        st.write("")
 
         st.markdown("#### 🕑 最適休憩時間CSV")
         st.caption("勤怠CSV全体の休憩枠を30分刻みに近づけ、合計休憩時間は変えずに出力します。")
@@ -1339,6 +1342,8 @@ def show_optimal_attendance_export():
                         st.dataframe(adjusted_df.loc[:, preview_cols].head(), use_container_width=True)
                 except Exception as e:
                     st.error(f"休憩時間補正中にエラーが発生しました: {str(e)}")
+
+        st.write("")
 
         st.markdown("#### 🔁 休憩時間一括変更CSV")
         st.caption("選択した従業員・対象月の休憩枠を指定した時間帯にまとめて置き換えます。")
@@ -1450,6 +1455,8 @@ def show_optimal_attendance_export():
                                     st.dataframe(overridden_df.loc[mask, preview_cols].head(), use_container_width=True)
                         except Exception as e:
                             st.error(f"休憩時間一括変更中にエラーが発生しました: {str(e)}")
+
+        st.write("")
 
         st.markdown("#### 🕛 24時間データCSV")
         st.caption("選択した従業員・対象月の全シフトを0:00〜24:00として出力します。")

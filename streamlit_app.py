@@ -458,10 +458,9 @@ def prepare_grid_data(result_paths):
                 duplicate_service_time = ''
             
             grid_row = {
-                # 指定された順序: エラー　カテゴリ　代替職員リスト　担当所員　利用者名　重複利用者名　重複エラー事業所名　重複サービス時間　日付　開始時間　終了時間　サービス詳細　重複時間　超過時間
                 'エラー': row.get('エラー', ''),
                 'カテゴリ': row.get('カテゴリ', ''),
-                '代替職員リスト': row.get('代替職員リスト', 'ー'),
+                '代替従業員リスト': row.get('代替職員リスト', 'ー'),
                 '担当所員': row.get('担当所員', ''),
                 '利用者名': row.get('利用者名', ''),
                 '重複利用者名': duplicate_user_name,
@@ -472,8 +471,7 @@ def prepare_grid_data(result_paths):
                 '終了時間': row.get('終了時間', ''),
                 'サービス詳細': f"{row.get('サービス内容', '')} - {row.get('実施時間', '')}".strip(' -'),
                 '重複時間': row.get('重複時間（分）', 0),
-                '超過時間': row.get('超過時間（分）', 0),
-                # 勤務時間の詳細情報を追加
+                '懲戒時間': row.get('懲戒時間', row.get('超過時間（分）', 0)),
                 'カバー状況': row.get('カバー状況', ''),
                 'エラー職員勤務時間': row.get('エラー職員勤務時間', ''),
                 '代替職員勤務時間': row.get('代替職員勤務時間', ''),
@@ -484,16 +482,24 @@ def prepare_grid_data(result_paths):
             }
             grid_data.append(grid_row)
     
-    # 指定された順序でDataFrameを作成（利用者名の次に重複エラー事業所名を配置）
-    column_order = [
-        'エラー', 'カテゴリ', '代替職員リスト', '担当所員', '利用者名', '重複利用者名',
-        '重複エラー事業所名', '重複サービス時間', '日付', '開始時間', '終了時間',
-        'サービス詳細', '重複時間', '超過時間', 'カバー状況', 'エラー職員勤務時間',
-        '代替職員勤務時間', '勤務時間詳細', '勤務時間外詳細', '未カバー区間', '勤務区間数'
+    desired_columns = [
+        '代替従業員リスト', '重複エラー事業所名', '利用者名', '日付', '開始時間', '終了時間',
+        '担当所員', 'サービス詳細', '重複利用者名', '重複サービス時間', '重複時間', '懲戒時間',
+        'エラー職員勤務時間', '代替職員勤務時間', '勤務時間詳細', '勤務時間外詳細', '未カバー区間'
     ]
+
+    base_columns = desired_columns + ['エラー', 'カテゴリ', 'カバー状況', '勤務区間数']
+    base_columns = list(dict.fromkeys(base_columns))
+    
+    if not grid_data:
+        return pd.DataFrame(columns=base_columns)
     
     df = pd.DataFrame(grid_data)
-    return df[column_order] if not df.empty else pd.DataFrame(columns=column_order)
+    
+    remaining_columns = [col for col in df.columns if col not in desired_columns]
+    ordered_columns = desired_columns + remaining_columns
+    
+    return df[ordered_columns]
 
 def create_styled_grid(df):
     """
@@ -505,7 +511,7 @@ def create_styled_grid(df):
     gb = GridOptionsBuilder.from_dataframe(df)
     
     # 基本設定
-    gb.configure_pagination(paginationAutoPageSize=True)
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=100)
     gb.configure_side_bar()
     gb.configure_selection('single', use_checkbox=False)
     gb.configure_default_column(
@@ -610,6 +616,7 @@ st.markdown("""
     color: #6c757d;
     font-size: 0.8em;
 }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -636,6 +643,7 @@ with st.sidebar:
     service_staff_col = st.text_input("サービス従業員列", value="担当所員")
     att_name_col = st.text_input("勤怠従業員列", value="名前")
     generate_diagnostics = st.checkbox("診断CSV出力", value=True)
+    show_debug_logs = st.checkbox("デバッグログを表示", value=False)
 
 # タブの作成
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -747,18 +755,21 @@ with tab1:
                 st.stop()
             
             # 保存されたファイルの最終確認
-            st.info("保存されたファイルの最終確認:")
             all_files = os.listdir(indir)
             # 大文字小文字を区別しないCSVファイル検出
             csv_files = [f for f in all_files if f.lower().endswith('.csv')]
             
             actual_service_files = []
             actual_attendance_files = []
+
+            if show_debug_logs:
+                st.info("保存されたファイルの最終確認:")
             
             for csv_file in csv_files:
                 file_path = os.path.join(indir, csv_file)
                 file_size = os.path.getsize(file_path)
-                st.write(f"• {csv_file} ({file_size} bytes)")
+                if show_debug_logs:
+                    st.write(f"• {csv_file} ({file_size} bytes)")
                 
                 # サービス実績ファイルと勤怠履歴ファイルを分類
                 if csv_file.lower() != att_file.name.lower():
@@ -943,6 +954,8 @@ with tab4:
         # 個別ダウンロード
         if st.session_state.result_paths:
             st.subheader("結果CSV")
+            st.markdown("")
+            st.caption("各事業所ごとの重複チェック結果CSVを個別にダウンロードできます。")
             for p in sorted(st.session_state.result_paths):
                 with open(p, "rb") as f:
                     st.download_button(
@@ -951,10 +964,13 @@ with tab4:
                         file_name=os.path.basename(p),
                         mime="text/csv",
                     )
+            st.write("")
 
         # 診断ダウンロード
         if st.session_state.diagnostic_paths and generate_diagnostics:
             st.subheader("診断CSV")
+            st.markdown("")
+            st.caption("オプションで生成した診断レポートCSVを確認できます。")
             for p in sorted(st.session_state.diagnostic_paths):
                 with open(p, "rb") as f:
                     st.download_button(
@@ -963,10 +979,13 @@ with tab4:
                         file_name=os.path.basename(p),
                         mime="text/csv",
                     )
+            st.write("")
 
         # まとめてZIP
         if st.session_state.result_paths:
             st.subheader("一括ZIP")
+            st.markdown("")
+            st.caption("結果CSVと診断CSVをまとめて取得したい場合はこちらをご利用ください。")
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 for p in st.session_state.result_paths:
@@ -987,4 +1006,3 @@ with tab4:
 
     else:
         st.info("ファイルをアップロードしてエラーチェックを実行してください")
-

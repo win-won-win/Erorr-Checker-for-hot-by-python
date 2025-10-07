@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import io
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 import calendar
 import re
 from src import normalize_name, parse_date_any, parse_minute_of_day
@@ -131,6 +131,257 @@ def format_time_for_csv(time_str: str) -> str:
     if not time_str or time_str == '':
         return ''
     return time_str
+
+# 休憩時間の列ペア（実績側10枠）
+BREAK_COLUMN_PAIRS: List[Tuple[str, str]] = [(f"休憩{i}", f"復帰{i}") for i in range(1, 11)]
+FULL_WIDTH_DIGIT_MAP = str.maketrans("０１２３４５６７８９", "0123456789")
+COLUMN_REMOVE_CHARS = [' ', '　', '"', "'", '“', '”']
+
+
+def normalize_column_name(name: Any) -> str:
+    """列名を比較用に正規化（スペース・引用符除去、全角数字→半角）"""
+    if name is None:
+        return ''
+    normalized = str(name)
+    for ch in COLUMN_REMOVE_CHARS:
+        normalized = normalized.replace(ch, '')
+    normalized = normalized.translate(FULL_WIDTH_DIGIT_MAP)
+    return normalized
+
+
+def normalize_break_header(header: str) -> str:
+    """休憩/復帰カラム名のスペース・全角数字を正規化"""
+    if header is None:
+        return ''
+    return normalize_column_name(header)
+
+
+def resolve_column(df: pd.DataFrame, target_name: str, fallback_suffix: str = '') -> Optional[str]:
+    """正規化した列名でターゲット列を探索"""
+    normalized_map = {normalize_column_name(col): col for col in df.columns}
+    normalized_target = normalize_column_name(target_name)
+    if normalized_target in normalized_map:
+        return normalized_map[normalized_target]
+    
+    # フォールバック: サフィックス一致などで探索
+    if fallback_suffix:
+        normalized_suffix = normalize_column_name(fallback_suffix)
+        for norm, col in normalized_map.items():
+            if norm.endswith(normalized_suffix):
+                return col
+    else:
+        for norm, col in normalized_map.items():
+            if normalized_target and normalized_target in norm:
+                return col
+    return None
+
+
+def get_break_column_pairs(df: pd.DataFrame) -> List[Tuple[str, str]]:
+    """DataFrame内の休憩/復帰カラムを検出し、実際の列名ペアを返す"""
+    normalized_map: Dict[str, str] = {}
+    for col in df.columns:
+        normalized_map.setdefault(normalize_break_header(col), col)
+    
+    detected_pairs: List[Tuple[str, str]] = []
+    for i in range(1, 11):
+        start_key = f"休憩{i}"
+        end_key = f"復帰{i}"
+        start_col = normalized_map.get(start_key)
+        end_col = normalized_map.get(end_key)
+        if start_col and end_col:
+            detected_pairs.append((start_col, end_col))
+    
+    if detected_pairs:
+        return detected_pairs
+    return BREAK_COLUMN_PAIRS.copy()
+
+
+def extract_month_string(date_value: Any) -> str:
+    """様々な日付表記から 'YYYY-MM' 形式の月文字列を取得"""
+    if pd.isna(date_value):
+        return ''
+    date_str = str(date_value).strip()
+    if not date_str:
+        return ''
+    
+    # 既にISO形式であれば先頭7文字を使用
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+        return date_str[:7]
+    
+    # YYYY-M-D のような形式はゼロ埋めして対応
+    iso_parts = re.match(r'^(\d{4})-(\d{1,2})-(\d{1,2})$', date_str)
+    if iso_parts:
+        year, month = iso_parts.group(1), int(iso_parts.group(2))
+        return f"{year}-{month:02d}"
+    
+    # スラッシュ区切りなども許容
+    slash_parts = re.match(r'^(\d{4})/(\d{1,2})/(\d{1,2})$', date_str)
+    if slash_parts:
+        year, month = int(slash_parts.group(1)), int(slash_parts.group(2))
+        return f"{year:04d}-{month:02d}"
+    
+    try:
+        parsed = parse_date_any(date_str)
+        return parsed.strftime("%Y-%m")
+    except Exception:
+        pass
+    
+    try:
+        parsed = pd.to_datetime(date_str, errors='coerce')
+        if pd.notna(parsed):
+            return f"{parsed.year:04d}-{parsed.month:02d}"
+    except Exception:
+        pass
+    
+    return ''
+
+
+def build_employee_month_mask(
+    df: pd.DataFrame,
+    selected_employees: List[str],
+    target_month: str
+) -> pd.Series:
+    """選択従業員と対象月に合致する行のマスクを生成"""
+    name_col = resolve_column(df, '名前', fallback_suffix='名前')
+    date_col = resolve_column(df, '*年月日', fallback_suffix='年月日')
+    if not name_col or not date_col:
+        return pd.Series([False] * len(df), index=df.index)
+    
+    normalized_names = df[name_col].astype(str).str.strip()
+    normalized_months = df[date_col].apply(extract_month_string)
+    employee_set = {normalize_column_name(emp).strip() for emp in selected_employees}
+    normalized_employee_names = normalized_names.apply(normalize_column_name)
+    
+    return normalized_employee_names.isin(employee_set) & (normalized_months == target_month)
+
+
+def minutes_to_extended_time(minutes: Optional[int]) -> str:
+    """分を0埋めなしの時刻文字列に変換（24時超もそのまま保持）"""
+    if minutes is None:
+        return ''
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}:{mins:02d}"
+
+
+def round_to_nearest_half_hour(minutes: int) -> int:
+    """分単位の値を30分刻みに四捨五入（15分以上で切り上げ）"""
+    return ((minutes + 15) // 30) * 30
+
+
+def auto_round_break_times(
+    attendance_df: pd.DataFrame
+) -> Tuple[pd.DataFrame, int, int]:
+    """
+    勤怠CSV全体の休憩時間を30分単位に近づける。
+    
+    - 開始・終了ともに30分単位であれば変更しない
+    - それ以外は、開始を30分単位に四捨五入し、元の休憩時間（分）は維持したまま終了を調整
+    
+    Returns:
+        (補正後DataFrame, 補正されたレコード数, 補正した休憩枠数)
+    """
+    df = attendance_df.copy()
+    break_pairs = get_break_column_pairs(df)
+    
+    if not break_pairs:
+        return df, 0, 0
+    
+    updated_rows = 0
+    updated_slots = 0
+    
+    for idx in df.index:
+        row_modified = False
+        for start_col, end_col in break_pairs:
+            start_raw = df.at[idx, start_col] if start_col in df.columns else None
+            end_raw = df.at[idx, end_col] if end_col in df.columns else None
+            
+            start_minutes = parse_minute_of_day(start_raw)
+            end_minutes = parse_minute_of_day(end_raw)
+            
+            if start_minutes is None or end_minutes is None:
+                continue
+            if end_minutes <= start_minutes:
+                continue
+            
+            duration = end_minutes - start_minutes
+            if duration <= 0:
+                continue
+            
+            if start_minutes % 30 == 0 and end_minutes % 30 == 0:
+                continue  # 既に30分単位
+            
+            rounded_start = max(0, round_to_nearest_half_hour(start_minutes))
+            new_end_minutes = rounded_start + duration
+            
+            new_start = minutes_to_extended_time(rounded_start)
+            new_end = minutes_to_extended_time(new_end_minutes)
+            
+            if new_start != str(start_raw) or new_end != str(end_raw):
+                df.at[idx, start_col] = new_start
+                df.at[idx, end_col] = new_end
+                row_modified = True
+                updated_slots += 1
+        
+        if row_modified:
+            updated_rows += 1
+    
+    return df, updated_rows, updated_slots
+
+
+def bulk_override_break_times(
+    attendance_df: pd.DataFrame,
+    selected_employees: List[str],
+    target_month: str,
+    new_start: str,
+    new_end: str
+) -> Tuple[pd.DataFrame, int, int]:
+    """
+    対象従業員・対象月の休憩時間（休憩1/復帰1のみ）を指定時刻に一括置換する。
+    
+    Returns:
+        (置換後DataFrame, 更新されたレコード数, 更新した休憩枠数)
+    """
+    df = attendance_df.copy()
+    mask = build_employee_month_mask(df, selected_employees, target_month)
+    
+    if not mask.any():
+        return df, 0, 0
+    
+    break_pairs = get_break_column_pairs(df)
+    updated_rows = 0
+    updated_slots = 0
+    
+    for idx in df[mask].index:
+        row_modified = False
+        if not break_pairs:
+            break
+        start_col, end_col = break_pairs[0]
+        if start_col not in df.columns or end_col not in df.columns:
+            continue
+        
+        start_val = df.at[idx, start_col]
+        end_val = df.at[idx, end_col]
+        
+        value_exists = False
+        if isinstance(start_val, str) and start_val.strip():
+            value_exists = True
+        elif isinstance(end_val, str) and end_val.strip():
+            value_exists = True
+        elif not isinstance(start_val, str) and not pd.isna(start_val):
+            value_exists = True
+        elif not isinstance(end_val, str) and not pd.isna(end_val):
+            value_exists = True
+        
+        if value_exists:
+            df.at[idx, start_col] = new_start
+            df.at[idx, end_col] = new_end
+            row_modified = True
+            updated_slots += 1
+        
+        if row_modified:
+            updated_rows += 1
+    
+    return df, updated_rows, updated_slots
 
 def merge_overlapping_shifts(shifts: List[Dict]) -> List[Dict]:
     """1時間半ルール適用：シフトを結合して最適な勤務時間を算出
@@ -910,8 +1161,38 @@ def show_optimal_attendance_export():
     
     # 勤怠データの読み込み確認
     try:
-        attendance_file_path = 'input/勤怠履歴.csv'
-        attendance_df = pd.read_csv(attendance_file_path, encoding='cp932')
+        attendance_df = None
+        attendance_source = "input/勤怠履歴.csv"
+        
+        if hasattr(st, 'session_state'):
+            if st.session_state.get('attendance_df') is not None:
+                attendance_df = st.session_state.attendance_df.copy()
+                attendance_source = "アップロード済み勤怠CSV（セッション）"
+            else:
+                session_att_path = st.session_state.get('attendance_file_path')
+                if session_att_path and os.path.exists(session_att_path):
+                    attendance_source = session_att_path
+                    for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
+                        try:
+                            attendance_df = pd.read_csv(session_att_path, encoding=encoding)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+        
+        if attendance_df is None:
+            # セッションに無い場合は既定のinputフォルダを参照
+            attendance_file_path = 'input/勤怠履歴.csv'
+            attendance_source = attendance_file_path
+            for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
+                try:
+                    attendance_df = pd.read_csv(attendance_file_path, encoding=encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+        
+        if attendance_df is None:
+            st.error("勤怠データの読み込みに失敗しました。")
+            return
         
         # 利用可能な従業員リストを取得
         available_employees = []
@@ -924,7 +1205,20 @@ def show_optimal_attendance_export():
             st.error("勤怠データから従業員情報を取得できませんでした。")
             return
         
-        st.success(f"勤怠データを読み込みました。利用可能な従業員: {len(available_employees)}名")
+        st.success(f"勤怠データを読み込みました（ソース: {attendance_source}）。利用可能な従業員: {len(available_employees)}名")
+        
+        # 利用可能な年月を表示
+        try:
+            name_col = resolve_column(attendance_df, '名前', fallback_suffix='名前')
+            date_col = resolve_column(attendance_df, '*年月日', fallback_suffix='年月日')
+            if name_col and date_col:
+                normalized_dates = attendance_df[date_col].apply(extract_month_string)
+                month_counts = normalized_dates.value_counts().sort_index()
+                if not month_counts.empty:
+                    month_info = ', '.join([f"{month} ({count}件)" for month, count in month_counts.items()])
+                    st.info(f"利用可能な年月: {month_info}")
+        except Exception:
+            pass
         
         # 対象月の選択
         col1, col2 = st.columns(2)
@@ -975,25 +1269,21 @@ def show_optimal_attendance_export():
                 for i, emp in enumerate(st.session_state.selected_employees_export, 1):
                     st.write(f"{i}. {emp}")
         
-        # CSV出力ボタン
+        st.markdown("### 📥 CSV出力")
+        
+        st.markdown("#### 🎯 最適勤怠データCSV")
         if st.session_state.selected_employees_export:
-            st.markdown("### 📥 CSV出力")
-            
             if st.button("🎯 最適勤怠データをCSV出力", type="primary", key="export_csv"):
                 with st.spinner("CSV生成中..."):
                     try:
-                        # jinjer形式CSVを生成（サービス実績データベース）
                         csv_content = generate_jinjer_csv(
                             st.session_state.selected_employees_export,
                             target_month_str,
                             attendance_df,
-                            None  # 作業ディレクトリは指定しない（カレントディレクトリから検索）
+                            None
                         )
-                        
-                        # ダウンロードボタン
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         filename = f"最適勤怠データ_{target_month_str}_{timestamp}.csv"
-                        
                         st.download_button(
                             label="📥 CSVファイルをダウンロード",
                             data=csv_content.encode('shift_jis', errors='ignore'),
@@ -1001,17 +1291,194 @@ def show_optimal_attendance_export():
                             mime="text/csv",
                             help="jinjer形式（133列）の最適勤怠データCSVファイル"
                         )
-                        
                         st.success(f"✅ CSV生成完了！{len(st.session_state.selected_employees_export)}名の勤怠データを出力しました。")
-                        
-                        # 生成されたCSVの詳細情報
-                        lines = csv_content.count('\n') - 1  # ヘッダー行を除く
+                        lines = csv_content.count('\n') - 1
                         st.info(f"📊 出力詳細: {lines}行のデータ（ヘッダー含む{lines + 1}行）")
-                        
                     except Exception as e:
                         st.error(f"CSV生成エラー: {str(e)}")
         else:
-            st.warning("出力対象の従業員を選択してください。")
+            st.info("従業員を選択すると、個別の最適勤怠データCSVを生成できます。")
+
+        st.markdown("#### 🕑 最適休憩時間CSV")
+        st.caption("勤怠CSV全体の休憩枠を30分刻みに近づけ、合計休憩時間は変えずに出力します。")
+        if st.button("🕑 最適休憩時間CSVを生成", key="export_break_auto"):
+            with st.spinner("休憩時間を補正しています..."):
+                try:
+                    adjusted_df, rounded_rows, rounded_slots = auto_round_break_times(attendance_df)
+                    csv_buffer = io.StringIO()
+                    adjusted_df.to_csv(csv_buffer, index=False)
+                    csv_bytes = csv_buffer.getvalue().encode('cp932', errors='ignore')
+                    
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"最適休憩時間_{target_month_str}_{timestamp}.csv"
+                    
+                    st.download_button(
+                        label="📥 CSVファイルをダウンロード",
+                        data=csv_bytes,
+                        file_name=filename,
+                        mime="text/csv",
+                        help="全従業員の休憩時刻を30分刻みで補正した勤怠CSV",
+                        key="download_break_auto"
+                    )
+                    
+                    if rounded_rows > 0:
+                        st.success(f"✅ {rounded_rows}件のレコードで休憩枠（{rounded_slots}枠）を補正しました。全従業員に適用しています。")
+                    else:
+                        st.info("補正対象の休憩時間が見つかりませんでした。元の値のまま出力します。")
+                    
+                    if debug_mode:
+                        name_col = resolve_column(adjusted_df, '名前', fallback_suffix='名前')
+                        date_col = resolve_column(adjusted_df, '*年月日', fallback_suffix='年月日')
+                        preview_pairs = get_break_column_pairs(adjusted_df)[:3]
+                        preview_cols = [
+                            col for col in [name_col, date_col] if col and col in adjusted_df.columns
+                        ]
+                        preview_cols += [
+                            col for pair in preview_pairs for col in pair if col in adjusted_df.columns
+                        ]
+                        st.dataframe(adjusted_df.loc[:, preview_cols].head(), use_container_width=True)
+                except Exception as e:
+                    st.error(f"休憩時間補正中にエラーが発生しました: {str(e)}")
+
+        st.markdown("#### 🔁 休憩時間一括変更CSV")
+        st.caption("選択した従業員・対象月の休憩枠を指定した時間帯にまとめて置き換えます。")
+        col_start, col_end = st.columns(2)
+        with col_start:
+            bulk_start_input = st.text_input(
+                "休憩開始時刻（例: 14:00 または 26:30）",
+                key="bulk_break_start"
+            )
+        with col_end:
+            bulk_end_input = st.text_input(
+                "休憩終了時刻（例: 15:00 または 27:30）",
+                key="bulk_break_end"
+            )
+        
+        if st.button("🔁 指定休憩時間でCSV出力", key="export_break_bulk"):
+            if not st.session_state.selected_employees_export:
+                st.error("先に従業員を選択してください。")
+            else:
+                start_minutes = parse_minute_of_day(bulk_start_input)
+                end_minutes = parse_minute_of_day(bulk_end_input)
+                
+                if start_minutes is None or end_minutes is None:
+                    st.error("時刻の形式が正しくありません。'HH:MM'形式で入力してください。")
+                elif end_minutes <= start_minutes:
+                    st.error("終了時刻は開始時刻より後になるように設定してください。")
+                else:
+                    with st.spinner("休憩時間を一括変更しています..."):
+                        try:
+                            new_start_formatted = minutes_to_extended_time(start_minutes)
+                            new_end_formatted = minutes_to_extended_time(end_minutes)
+                            
+                            target_mask = build_employee_month_mask(
+                                attendance_df,
+                                st.session_state.selected_employees_export,
+                                target_month_str
+                            )
+                            matching_rows = attendance_df[target_mask]
+                            
+                            break_pairs = get_break_column_pairs(attendance_df)
+                            existing_count = 0
+                            if break_pairs:
+                                start_col, end_col = break_pairs[0]
+                                if start_col in attendance_df.columns and end_col in attendance_df.columns:
+                                    def has_time(val):
+                                        if isinstance(val, str):
+                                            return val.strip() != ''
+                                        return pd.notna(val)
+                                    existing_mask = matching_rows[start_col].apply(has_time) | matching_rows[end_col].apply(has_time)
+                                    existing_count = int(existing_mask.sum())
+                            
+                            st.info(f"対象レコード: {len(matching_rows)}件 / 休憩1・復帰1が設定済み: {existing_count}件")
+                            
+                            overridden_df, overridden_rows, overridden_slots = bulk_override_break_times(
+                                attendance_df,
+                                st.session_state.selected_employees_export,
+                                target_month_str,
+                                new_start_formatted,
+                                new_end_formatted
+                            )
+                            
+                            csv_buffer = io.StringIO()
+                            download_df = overridden_df[
+                                build_employee_month_mask(
+                                    overridden_df,
+                                    st.session_state.selected_employees_export,
+                                    target_month_str
+                                )
+                            ].copy()
+                            
+                            if download_df.empty:
+                                st.warning("指定された従業員に該当するデータがありませんでした。空のCSVを出力します。")
+                            download_df.to_csv(csv_buffer, index=False)
+                            csv_bytes = csv_buffer.getvalue().encode('cp932', errors='ignore')
+                            
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            filename = f"休憩時間一括変更_{target_month_str}_{timestamp}.csv"
+                            
+                            st.download_button(
+                                label="📥 CSVファイルをダウンロード",
+                                data=csv_bytes,
+                                file_name=filename,
+                                mime="text/csv",
+                                help=f"休憩時間を{new_start_formatted}〜{new_end_formatted}に統一した勤怠CSV",
+                                key="download_break_bulk"
+                            )
+                            
+                            if overridden_rows > 0:
+                                st.success(f"✅ {overridden_rows}件のレコードで休憩枠（{overridden_slots}枠）を{new_start_formatted}〜{new_end_formatted}に変更しました。ダウンロードでは選択した従業員のみを出力しています。")
+                            else:
+                                st.info("変更対象の休憩1/復帰1が見つかりませんでした。元の値のまま出力します。")
+                            
+                            if debug_mode:
+                                mask = build_employee_month_mask(
+                                    overridden_df,
+                                    st.session_state.selected_employees_export,
+                                    target_month_str
+                                )
+                                if mask.any():
+                                    name_col = resolve_column(overridden_df, '名前', fallback_suffix='名前')
+                                    date_col = resolve_column(overridden_df, '*年月日', fallback_suffix='年月日')
+                                    preview_pairs = get_break_column_pairs(overridden_df)[:3]
+                                    preview_cols = [
+                                        col for col in [name_col, date_col] if col and col in overridden_df.columns
+                                    ]
+                                    preview_cols += [
+                                        col for pair in preview_pairs for col in pair if col in overridden_df.columns
+                                    ]
+                                    st.dataframe(overridden_df.loc[mask, preview_cols].head(), use_container_width=True)
+                        except Exception as e:
+                            st.error(f"休憩時間一括変更中にエラーが発生しました: {str(e)}")
+
+        st.markdown("#### 🕛 24時間データCSV")
+        st.caption("選択した従業員・対象月の全シフトを0:00〜24:00として出力します。")
+        if st.button("🕛 24時間データCSVを生成", key="export_full_day"):
+            if not st.session_state.selected_employees_export:
+                st.error("先に従業員を選択してください。")
+            else:
+                with st.spinner("24時間データCSVを生成しています..."):
+                    try:
+                        csv_content = generate_0_24_jinjer_csv(
+                            st.session_state.selected_employees_export,
+                            target_month_str,
+                            attendance_df
+                        )
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        filename = f"24時間データ_{target_month_str}_{timestamp}.csv"
+                        st.download_button(
+                            label="📥 CSVファイルをダウンロード",
+                            data=csv_content.encode('shift_jis', errors='ignore'),
+                            file_name=filename,
+                            mime="text/csv",
+                            help="全日0:00〜24:00の勤怠データCSV",
+                            key="download_full_day"
+                        )
+                        st.success(f"✅ {len(st.session_state.selected_employees_export)}名分の24時間データCSVを生成しました。")
+                        lines = csv_content.count('\n') - 1
+                        st.info(f"📊 出力詳細: {lines}行のデータ（ヘッダー含む{lines + 1}行）")
+                    except Exception as e:
+                        st.error(f"24時間データCSV生成中にエラーが発生しました: {str(e)}")
             
     except FileNotFoundError:
         st.error("勤怠履歴.csvファイルが見つかりません。inputフォルダに配置してください。")

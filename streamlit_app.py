@@ -727,6 +727,21 @@ with tab1:
                 if not os.path.exists(actual_att_path):
                     st.error("勤怠履歴CSV保存失敗")
                     st.stop()
+                
+                # 勤怠履歴CSVを読み込んでセッション状態に保存（複数エンコーディング試行）
+                attendance_df = None
+                for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
+                    try:
+                        attendance_df = pd.read_csv(actual_att_path, encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                
+                if attendance_df is not None:
+                    st.session_state.attendance_df = attendance_df
+                    st.session_state.attendance_file_path = actual_att_path
+                else:
+                    st.warning("勤怠履歴CSVの読み込みに失敗しました。既定の処理を継続します。")
             except Exception as e:
                 st.error(f"勤怠履歴CSV保存エラー: {str(e)}")
                 st.stop()
@@ -972,5 +987,4 @@ with tab4:
 
     else:
         st.info("ファイルをアップロードしてエラーチェックを実行してください")
-
 

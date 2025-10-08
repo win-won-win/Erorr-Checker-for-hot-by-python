@@ -384,6 +384,27 @@ def build_employee_month_mask(
     return normalized_employee_names.isin(employee_set) & (normalized_months == target_month)
 
 
+def build_month_mask(df: pd.DataFrame, target_month: str) -> pd.Series:
+    """対象月に合致する行のみTrueとなるマスクを生成"""
+    date_col = resolve_column(df, '*年月日', fallback_suffix='年月日')
+    if not date_col:
+        return pd.Series([True] * len(df), index=df.index)
+    normalized_months = df[date_col].apply(extract_month_string)
+    return normalized_months == target_month
+
+
+def get_unique_employee_names(df: pd.DataFrame) -> List[str]:
+    """勤怠データから一意な従業員名一覧を取得"""
+    name_col = resolve_column(df, '名前', fallback_suffix='名前')
+    if not name_col:
+        return []
+    names = df[name_col].astype(str).str.strip()
+    non_empty = names[names != '']
+    unique_names = pd.Series(non_empty).drop_duplicates().tolist()
+    unique_names = [name for name in unique_names if name]
+    return sorted(unique_names)
+
+
 def minutes_to_extended_time(minutes: Optional[int]) -> str:
     """分を0埋めなしの時刻文字列に変換（24時超もそのまま保持）"""
     if minutes is None:
@@ -1352,19 +1373,13 @@ def show_optimal_attendance_export():
             attendance_df = build_builtin_attendance_dataframe()
             attendance_source = "組み込みデフォルト"
         
-        # 利用可能な従業員リストを取得
-        available_employees = []
-        for _, row in attendance_df.iterrows():
-            emp_name = str(row.get('名前', '')).strip()
-            if emp_name and emp_name not in available_employees:
-                available_employees.append(emp_name)
-        
-        if not available_employees:
+        total_employees = get_unique_employee_names(attendance_df)
+        if not total_employees:
             st.error("勤怠データから従業員情報を取得できませんでした。")
             return
         
         source_label = attendance_source or "不明"
-        st.success(f"勤怠データを読み込みました（ソース: {source_label}）。利用可能な従業員: {len(available_employees)}名")
+        st.success(f"勤怠データを読み込みました（ソース: {source_label}）。登録従業員: {len(total_employees)}名")
         
         # 利用可能な年月を表示
         try:
@@ -1388,8 +1403,35 @@ def show_optimal_attendance_export():
         
         target_month_str = f"{target_year}-{target_month:02d}"
         
+        # 対象月の勤怠データを抽出
+        month_mask = build_month_mask(attendance_df, target_month_str)
+        month_attendance_df = attendance_df[month_mask].copy() if len(attendance_df) else attendance_df.copy()
+        
+        if month_attendance_df.empty:
+            st.warning(f"{target_month_str} の勤怠データが見つかりませんでした。別の月を選択してください。")
+            if 'selected_employees_export' in st.session_state:
+                st.session_state.selected_employees_export = []
+            st.stop()
+        
+        available_employees = get_unique_employee_names(month_attendance_df)
+        if not available_employees:
+            st.warning(f"{target_month_str} の勤怠データに従業員情報がありません。")
+            if 'selected_employees_export' in st.session_state:
+                st.session_state.selected_employees_export = []
+            st.stop()
+        
+        st.caption(f"{target_month_str} の対象従業員: {len(available_employees)}名")
+        
         # 従業員選択
         st.markdown("### 👥 出力対象従業員の選択")
+        
+        if 'selected_employees_export' not in st.session_state:
+            st.session_state.selected_employees_export = []
+        else:
+            st.session_state.selected_employees_export = [
+                emp for emp in st.session_state.selected_employees_export
+                if emp in available_employees
+            ]
         
         # 全選択・全解除ボタン
         col1, col2, col3 = st.columns([1, 1, 2])
@@ -1401,10 +1443,6 @@ def show_optimal_attendance_export():
             if st.button("選択解除", key="clear_all_export"):
                 st.session_state.selected_employees_export = []
                 st.rerun()
-        
-        # セッション状態の初期化
-        if 'selected_employees_export' not in st.session_state:
-            st.session_state.selected_employees_export = []
         
         # 従業員チェックボックス
         st.markdown("#### チェックボックスで従業員を選択してください")
@@ -1439,7 +1477,7 @@ def show_optimal_attendance_export():
                         csv_content = generate_jinjer_csv(
                             st.session_state.selected_employees_export,
                             target_month_str,
-                            attendance_df,
+                            month_attendance_df,
                             None
                         )
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1466,7 +1504,7 @@ def show_optimal_attendance_export():
         if st.button("🕑 最適休憩時間CSVを生成", key="export_break_auto"):
             with st.spinner("休憩時間を補正しています..."):
                 try:
-                    adjusted_df, rounded_rows, rounded_slots = auto_round_break_times(attendance_df)
+                    adjusted_df, rounded_rows, rounded_slots = auto_round_break_times(month_attendance_df)
                     csv_bytes = dataframe_to_jinjer_csv_bytes(adjusted_df)
                     
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1534,17 +1572,17 @@ def show_optimal_attendance_export():
                             new_end_formatted = minutes_to_extended_time(end_minutes)
                             
                             target_mask = build_employee_month_mask(
-                                attendance_df,
+                                month_attendance_df,
                                 st.session_state.selected_employees_export,
                                 target_month_str
                             )
-                            matching_rows = attendance_df[target_mask]
+                            matching_rows = month_attendance_df[target_mask]
                             
-                            break_pairs = get_break_column_pairs(attendance_df)
+                            break_pairs = get_break_column_pairs(month_attendance_df)
                             existing_count = 0
                             if break_pairs:
                                 start_col, end_col = break_pairs[0]
-                                if start_col in attendance_df.columns and end_col in attendance_df.columns:
+                                if start_col in month_attendance_df.columns and end_col in month_attendance_df.columns:
                                     def has_time(val):
                                         if isinstance(val, str):
                                             return val.strip() != ''
@@ -1555,7 +1593,7 @@ def show_optimal_attendance_export():
                             st.info(f"対象レコード: {len(matching_rows)}件 / 休憩1・復帰1が設定済み: {existing_count}件")
                             
                             overridden_df, overridden_rows, overridden_slots = bulk_override_break_times(
-                                attendance_df,
+                                month_attendance_df,
                                 st.session_state.selected_employees_export,
                                 target_month_str,
                                 new_start_formatted,
@@ -1624,7 +1662,7 @@ def show_optimal_attendance_export():
                         csv_content = generate_0_24_jinjer_csv(
                             st.session_state.selected_employees_export,
                             target_month_str,
-                            attendance_df
+                            month_attendance_df
                         )
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                         filename = f"24時間データ_{target_month_str}_{timestamp}.csv"

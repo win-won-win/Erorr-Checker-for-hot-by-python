@@ -821,6 +821,7 @@ with tab1:
                     except Exception as e:
                         st.error(f"組み込み勤怠データの準備に失敗しました: {str(e)}")
                         st.stop()
+                attendance_filename = os.path.basename(actual_att_path)
                 st.session_state.attendance_df = attendance_df
                 st.session_state.attendance_file_path = actual_att_path
             else:
@@ -831,6 +832,7 @@ with tab1:
                     if not os.path.exists(actual_att_path):
                         st.error("勤怠履歴CSV保存失敗")
                         st.stop()
+                    attendance_filename = os.path.basename(actual_att_path)
                     
                     # 勤怠履歴CSVを読み込んでセッション状態に保存（複数エンコーディング試行）
                     attendance_df = None
@@ -861,6 +863,9 @@ with tab1:
             if show_debug_logs:
                 st.info("保存されたファイルの最終確認:")
             
+            import unicodedata
+            normalized_attendance = unicodedata.normalize('NFC', attendance_filename).casefold() if attendance_filename else None
+            
             for csv_file in csv_files:
                 file_path = os.path.join(indir, csv_file)
                 file_size = os.path.getsize(file_path)
@@ -868,7 +873,8 @@ with tab1:
                     st.write(f"• {csv_file} ({file_size} bytes)")
                 
                 # サービス実績ファイルと勤怠履歴ファイルを分類
-                if attendance_filename and csv_file.lower() == attendance_filename.lower():
+                normalized_csv = unicodedata.normalize('NFC', csv_file).casefold()
+                if normalized_attendance and normalized_csv == normalized_attendance:
                     actual_attendance_files.append(csv_file)
                 else:
                     actual_service_files.append(csv_file)

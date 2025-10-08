@@ -22,6 +22,23 @@ import math
 import pandas as pd
 
 ENCODING = "shift_jis"  # 出力はShift_JIS想定（Windows-31J互換）
+# 入力は複数の可能性があるためフォールバック順を用意
+CSV_READ_ENCODINGS = ["utf-8-sig", "cp932", "shift_jis", "utf-8"]
+
+
+def read_csv_with_fallback(path: Path) -> pd.DataFrame:
+    """複数のエンコーディングを試しながらCSVを読み込む。"""
+    last_error: Optional[Exception] = None
+    for enc in CSV_READ_ENCODINGS:
+        try:
+            df = pd.read_csv(path, encoding=enc)
+            print(f"DEBUG: CSV読み込み成功 - {path.name} (encoding={enc})")
+            return df
+        except UnicodeDecodeError as e:
+            last_error = e
+            print(f"DEBUG: CSV読み込み失敗 - {path.name} (encoding={enc}): {e}")
+            continue
+    raise last_error if last_error else UnicodeDecodeError("unknown", b"", 0, 1, "decode failed")
 SERVICE_DATE_COL = "西暦日付"
 SERVICE_START_COL = "開始時間"
 SERVICE_END_COL = "終了時間"
@@ -854,14 +871,14 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         raise SystemExit("勤怠履歴CSVが見つかりません。")
 
     # 勤怠ロード＆インターバル化
-    att_df = pd.read_csv(att_file, encoding=ENCODING)
+    att_df = read_csv_with_fallback(att_file)
     att_map, att_name_index = build_work_intervals(att_df, name_col=att_name_col, use_schedule_when_missing=use_schedule_when_missing)
 
     # 施設ごとのデータロード＆インターバル化
     service_raw: Dict[str, pd.DataFrame] = {}
     for sf in service_files:
         fac = sf.stem  # 例: サービス実態A
-        df = pd.read_csv(sf, encoding=ENCODING)
+        df = read_csv_with_fallback(sf)
         service_raw[fac] = build_service_records(sf, df, fac, staff_col=service_staff_col)
 
     # 1) 施設間重複の検出（ペアごと）

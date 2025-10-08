@@ -17,6 +17,8 @@ from src import normalize_name, parse_date_any, parse_minute_of_day
 import os
 import glob
 from pathlib import Path
+import base64
+import gzip
 
 
 def find_default_attendance_csv() -> Optional[Path]:
@@ -39,6 +41,65 @@ def find_default_attendance_csv() -> Optional[Path]:
     return None
 
 
+BUILTIN_ATTENDANCE_CSV_BASE64 = (
+    "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"
+)
+
+
 def _read_attendance_csv(path: Path) -> Optional[pd.DataFrame]:
     """複数エンコーディングを試して勤怠CSVを読み込む"""
     encodings = ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']
@@ -51,39 +112,18 @@ def _read_attendance_csv(path: Path) -> Optional[pd.DataFrame]:
 
 
 def build_builtin_attendance_dataframe() -> pd.DataFrame:
-    """組み込みの勤怠データ（0:00-24:00のダミー）を生成"""
-    headers = create_jinjer_headers()
-    employees = [
-        ("デフォルト太郎", "EMP000"),
-        ("デフォルト花子", "EMP001"),
-    ]
-    dates = [f"2025-09-{day:02d}" for day in range(1, 6)]
-    rows: List[Dict[str, Any]] = []
-
-    for name, emp_id in employees:
-        for date in dates:
-            row = {col: '' for col in headers}
-            row['名前'] = name
-            row['*従業員ID'] = emp_id
-            row['*年月日'] = date
-            row['出勤1'] = '0:00'
-            row['退勤1'] = '24:00'
-            # 打刻区分ID、労働時間などの必須カラムを設定
-            for i in range(1, 51):
-                row[f'打刻区分ID:{i}'] = 'FALSE'
-            row['総労働時間'] = '24:00'
-            row['実労働時間'] = '23:00'
-            row['休憩時間'] = '1:00'
-            row['総残業時間'] = '16:00'
-            row['法定外残業時間'] = '16:00'
-            rows.append(row)
-
-    return pd.DataFrame(rows, columns=headers)
+    """組み込みの勤怠データCSVを読み込んでDataFrameを返す"""
+    raw_bytes = gzip.decompress(base64.b64decode(BUILTIN_ATTENDANCE_CSV_BASE64))
+    buffer = io.BytesIO(raw_bytes)
+    return pd.read_csv(buffer, encoding='cp932')
 
 
 def get_builtin_attendance_csv_bytes(encoding: str = 'shift_jis') -> bytes:
     """組み込み勤怠データを指定エンコードのCSVバイト列として取得"""
-    df = build_builtin_attendance_dataframe()
+    raw_bytes = gzip.decompress(base64.b64decode(BUILTIN_ATTENDANCE_CSV_BASE64))
+    if encoding.lower() in ('cp932', 'shift_jis', 'shift-jis'):  # 元データはCP932
+        return raw_bytes
+    df = pd.read_csv(io.BytesIO(raw_bytes), encoding='cp932')
     buffer = io.StringIO()
     df.to_csv(buffer, index=False)
     return buffer.getvalue().encode(encoding, errors='ignore')

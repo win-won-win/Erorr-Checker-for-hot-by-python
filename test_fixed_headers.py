@@ -11,7 +11,7 @@ sys.path.append(os.path.dirname(__file__))
 from optimal_attendance_export import create_jinjer_headers
 
 def test_fixed_structure():
-    """修正後の133列構造をテスト"""
+    """修正後の194列構造をテスト"""
     headers = create_jinjer_headers()
     
     print(f"総ヘッダー数: {len(headers)}")
@@ -19,14 +19,15 @@ def test_fixed_structure():
     
     # 重要なインデックスを確認
     key_indices = {
-        '出勤1': 19,
-        '退勤1': 20,
-        '打刻区分ID:1': 101,
-        '打刻区分ID:10': 110,
-        '未打刻': 111,
-        '実績確定状況': 115,
-        '総労働時間': 116,
-        '申請承認済法定外残業時間': 128
+        '出勤1': 21,
+        '退勤1': 22,
+        '打刻区分ID:1': 122,
+        '打刻区分ID:10': 131,
+        '打刻区分ID:50': 171,
+        '未打刻': 172,
+        '実績確定状況': 176,
+        '総労働時間': 177,
+        '申請承認済法定外残業時間': 189
     }
     
     print("=== 重要なインデックス確認 ===")
@@ -44,15 +45,15 @@ def test_fixed_structure():
             all_correct = False
     
     print(f"\n=== 結果 ===")
-    if all_correct and len(headers) == 133:
+    if all_correct and len(headers) == 194:
         print("✅ すべてのテストが成功しました！")
-        print("✅ ヘッダー数も133列で正しいです。")
+        print("✅ ヘッダー数も194列で正しいです。")
     else:
         print("❌ 一部のテストが失敗しました。")
-        if len(headers) != 133:
-            print(f"❌ ヘッダー数が間違っています: 期待=133, 実際={len(headers)}")
+        if len(headers) != 194:
+            print(f"❌ ヘッダー数が間違っています: 期待=194, 実際={len(headers)}")
     
-    return all_correct and len(headers) == 133
+    return all_correct and len(headers) == 194
 
 if __name__ == "__main__":
     success = test_fixed_structure()

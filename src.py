@@ -21,7 +21,7 @@ import math
 
 import pandas as pd
 
-ENCODING = "cp932"  # 入出力はWindows-31J想定（添付データ準拠）
+ENCODING = "shift_jis"  # 出力はShift_JIS想定（Windows-31J互換）
 SERVICE_DATE_COL = "西暦日付"
 SERVICE_START_COL = "開始時間"
 SERVICE_END_COL = "終了時間"
@@ -1097,11 +1097,11 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         out_df = out_df[cols]
 
         out_path = input_dir / f"result_{fac}.csv"
-        # 詳細カラムに日本語が含まれるため、UTF-8で出力
+        # 詳細カラムに日本語が含まれるため、Shift_JISで出力
         try:
             out_df.to_csv(out_path, index=False, encoding=ENCODING)
         except UnicodeEncodeError:
-            # cp932でエンコードできない場合はUTF-8で出力
+            # Shift_JISでエンコードできない場合はUTF-8で出力
             out_df.to_csv(out_path, index=False, encoding="utf-8-sig")
 
 def main():

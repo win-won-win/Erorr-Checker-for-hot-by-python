@@ -7,10 +7,12 @@ import zipfile
 import shutil
 import subprocess
 import sys
+import re
 from datetime import datetime
 import calendar
 from typing import List, Dict, Any
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
+from src import normalize_name
 
 # アイコン定義（洗練されたUnicodeアイコン）
 ICONS = {
@@ -400,6 +402,37 @@ def extract_facility_names_from_partner_facilities(partner_facilities_str):
     
     return facility_names
 
+def normalize_staff_list(raw_value: Any) -> str:
+    """
+    代替職員リストなどのスタッフ名リストを正規化。
+    区切り文字付きの文字列から個々の名前を抽出し、normalize_nameを適用する。
+    """
+    if raw_value is None or (isinstance(raw_value, float) and pd.isna(raw_value)):
+        return ''
+    
+    text = str(raw_value).strip()
+    
+    # 明示的に候補なしを示す記号はそのまま返す
+    if text in {'', 'ー', '-'}:
+        return text
+    
+    # 区切り文字で分割（スラッシュ・全角スラッシュ・カンマ類）
+    parts = re.split(r'[／/，,、]+', text)
+    normalized_parts = []
+    
+    for part in parts:
+        candidate = part.strip()
+        if not candidate:
+            continue
+        normalized_candidate = normalize_name(candidate) or candidate
+        if normalized_candidate not in normalized_parts:
+            normalized_parts.append(normalized_candidate)
+    
+    if not normalized_parts:
+        return ''
+    
+    return ' / '.join(normalized_parts)
+
 def prepare_grid_data(result_paths):
     """
     result_*.csvファイルからグリッド表示用のDataFrameを作成
@@ -457,11 +490,28 @@ def prepare_grid_data(result_paths):
             else:
                 duplicate_service_time = ''
             
+            raw_staff = row.get('担当所員', '')
+            normalized_staff = row.get('担当所員_norm', '')
+            if isinstance(normalized_staff, str) and normalized_staff.strip():
+                display_staff = normalized_staff.strip()
+            elif isinstance(raw_staff, str) and raw_staff.strip():
+                display_staff = normalize_name(raw_staff.strip()) or raw_staff.strip()
+            else:
+                display_staff = ''
+            
+            raw_alt_staff = row.get('代替職員リスト', '')
+            normalized_alt_staff = normalize_staff_list(raw_alt_staff)
+            if normalized_alt_staff:
+                display_alt_staff = normalized_alt_staff
+            else:
+                raw_alt_text = str(raw_alt_staff).strip() if raw_alt_staff is not None else ''
+                display_alt_staff = 'ー' if raw_alt_text == '' or raw_alt_text.lower() == 'nan' else raw_alt_text
+            
             grid_row = {
                 'エラー': row.get('エラー', ''),
                 'カテゴリ': row.get('カテゴリ', ''),
-                '代替従業員リスト': row.get('代替職員リスト', 'ー'),
-                '担当所員': row.get('担当所員', ''),
+                '代替従業員リスト': display_alt_staff,
+                '担当所員': display_staff,
                 '利用者名': row.get('利用者名', ''),
                 '重複利用者名': duplicate_user_name,
                 '重複エラー事業所名': duplicate_facility_display,
@@ -682,9 +732,17 @@ with tab1:
         if not svc_files:
             st.error("サービス実態CSVを1件以上アップロードしてください。")
             st.stop()
+        
+        default_attendance_path = os.path.join(os.path.dirname(__file__), "input", "勤怠履歴.csv")
+        use_default_attendance = False
+        
         if not att_file:
-            st.error("勤怠履歴CSVをアップロードしてください。")
-            st.stop()
+            if os.path.exists(default_attendance_path):
+                use_default_attendance = True
+                st.info("勤怠履歴CSVが未アップロードのため、`input/勤怠履歴.csv` を使用します。")
+            else:
+                st.error("勤怠履歴CSVをアップロードするか、inputフォルダに勤怠履歴.csvを配置してください。")
+                st.stop()
 
         with st.spinner("処理中..."):
             # 作業用ディレクトリ
@@ -729,30 +787,59 @@ with tab1:
                 except Exception as e:
                     st.error(f"保存エラー: {original_name} -> {str(e)}")
             
-            att_file_path = os.path.join(indir, att_file.name)
-            try:
-                actual_att_path, att_debug_info = save_upload_to(att_file_path, att_file)
-                if not os.path.exists(actual_att_path):
-                    st.error("勤怠履歴CSV保存失敗")
+            attendance_filename = None
+            actual_att_path = None
+            
+            if use_default_attendance:
+                attendance_filename = os.path.basename(default_attendance_path)
+                actual_att_path = os.path.join(indir, attendance_filename)
+                
+                try:
+                    shutil.copyfile(default_attendance_path, actual_att_path)
+                except Exception as e:
+                    st.error(f"勤怠履歴CSVのコピーに失敗しました: {str(e)}")
                     st.stop()
                 
                 # 勤怠履歴CSVを読み込んでセッション状態に保存（複数エンコーディング試行）
                 attendance_df = None
                 for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
                     try:
-                        attendance_df = pd.read_csv(actual_att_path, encoding=encoding)
+                        attendance_df = pd.read_csv(default_attendance_path, encoding=encoding)
                         break
                     except UnicodeDecodeError:
                         continue
                 
                 if attendance_df is not None:
                     st.session_state.attendance_df = attendance_df
-                    st.session_state.attendance_file_path = actual_att_path
+                    st.session_state.attendance_file_path = default_attendance_path
                 else:
-                    st.warning("勤怠履歴CSVの読み込みに失敗しました。既定の処理を継続します。")
-            except Exception as e:
-                st.error(f"勤怠履歴CSV保存エラー: {str(e)}")
-                st.stop()
+                    st.warning("勤怠履歴CSV（既定ファイル）の読み込みに失敗しました。既定の処理を継続します。")
+            else:
+                attendance_filename = att_file.name
+                att_file_path = os.path.join(indir, attendance_filename)
+                try:
+                    actual_att_path, att_debug_info = save_upload_to(att_file_path, att_file)
+                    if not os.path.exists(actual_att_path):
+                        st.error("勤怠履歴CSV保存失敗")
+                        st.stop()
+                    
+                    # 勤怠履歴CSVを読み込んでセッション状態に保存（複数エンコーディング試行）
+                    attendance_df = None
+                    for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
+                        try:
+                            attendance_df = pd.read_csv(actual_att_path, encoding=encoding)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    
+                    if attendance_df is not None:
+                        st.session_state.attendance_df = attendance_df
+                        st.session_state.attendance_file_path = actual_att_path
+                    else:
+                        st.warning("勤怠履歴CSVの読み込みに失敗しました。既定の処理を継続します。")
+                except Exception as e:
+                    st.error(f"勤怠履歴CSV保存エラー: {str(e)}")
+                    st.stop()
             
             # 保存されたファイルの最終確認
             all_files = os.listdir(indir)
@@ -772,10 +859,10 @@ with tab1:
                     st.write(f"• {csv_file} ({file_size} bytes)")
                 
                 # サービス実績ファイルと勤怠履歴ファイルを分類
-                if csv_file.lower() != att_file.name.lower():
-                    actual_service_files.append(csv_file)
-                else:
+                if attendance_filename and csv_file.lower() == attendance_filename.lower():
                     actual_attendance_files.append(csv_file)
+                else:
+                    actual_service_files.append(csv_file)
             
             # サービス実績データをセッション状態に保存
             service_data_list = []
@@ -810,7 +897,7 @@ with tab1:
             # コマンド組み立て
             cmd = [sys.executable, src_target, "--input", indir, "--identical-prefer", identical_prefer, "--alt-delim", alt_delim]
             # 勤怠履歴CSVファイルを明示的に指定
-            cmd += ["--attendance-file", att_file.name]
+            cmd += ["--attendance-file", attendance_filename]
             if use_schedule_when_missing:
                 cmd.append("--use-schedule-when-missing")
             if not generate_diagnostics:

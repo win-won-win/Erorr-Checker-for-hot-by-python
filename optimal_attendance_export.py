@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 最適勤怠データ出力機能
-jinjer形式CSV（133列）を出力する
+jinjer形式CSV（194列）を出力する
 """
 
 import streamlit as st
@@ -18,7 +18,7 @@ import os
 import glob
 
 def create_jinjer_headers() -> List[str]:
-    """jinjer形式CSVのヘッダー（133列）を生成"""
+    """jinjer形式CSVのヘッダー（194列）を生成"""
     headers = []
     
     # 基本情報（5列）
@@ -26,12 +26,13 @@ def create_jinjer_headers() -> List[str]:
         '名前', '*従業員ID', '*年月日', '*打刻グループID', '所属グループ名'
     ])
     
-    # スケジュール情報（14列）- スケジュール外復帰予定時刻を追加
+    # スケジュール情報（15列）
     headers.extend([
         'スケジュール雛形ID', '出勤予定時刻', '退勤予定時刻',
         '休憩予定時刻1', '復帰予定時刻1', '休憩予定時刻2', '復帰予定時刻2',
         '休憩予定時刻3', '復帰予定時刻3', '休憩予定時刻4', '復帰予定時刻4',
-        '休憩予定時刻5', '復帰予定時刻5', 'スケジュール外休憩予定時刻', 'スケジュール外復帰予定時刻'
+        '休憩予定時刻5', '復帰予定時刻5',
+        'スケジュール外休憩予定時刻', 'スケジュール外復帰予定時刻'
     ])
     
     # 休日設定（1列）
@@ -56,9 +57,10 @@ def create_jinjer_headers() -> List[str]:
         '食事1開始', '食事1終了', '食事2開始', '食事2終了'
     ])
     
-    # 外出・再入（10列）- 5回に削減
+    # 外出・再入（20列）- 最大10回外出対応
     headers.extend([
-        '外出1', '再入1', '外出2', '再入2', '外出3', '再入3', '外出4', '再入4', '外出5', '再入5'
+        '外出1', '再入1', '外出2', '再入2', '外出3', '再入3', '外出4', '再入4', '外出5', '再入5',
+        '外出6', '再入6', '外出7', '再入7', '外出8', '再入8', '外出9', '再入9', '外出10', '再入10'
     ])
     
     # 休日休暇（10列）
@@ -74,13 +76,14 @@ def create_jinjer_headers() -> List[str]:
         '遅刻（0:有1:無）', '早退（0:有1:無）'
     ])
     
-    # 直行・直帰（10列）- 5シフトに削減
+    # 直行・直帰（20列）- 最大10シフト対応
     headers.extend([
-        '直行1', '直帰1', '直行2', '直帰2', '直行3', '直帰3', '直行4', '直帰4', '直行5', '直帰5'
+        '直行1', '直帰1', '直行2', '直帰2', '直行3', '直帰3', '直行4', '直帰4', '直行5', '直帰5',
+        '直行6', '直帰6', '直行7', '直帰7', '直行8', '直帰8', '直行9', '直帰9', '直行10', '直帰10'
     ])
     
-    # 打刻区分ID（10列）
-    for i in range(1, 11):
+    # 打刻区分ID（50列）
+    for i in range(1, 51):
         headers.append(f'打刻区分ID:{i}')
     
     # 勤務状況フラグ（5列）
@@ -94,10 +97,10 @@ def create_jinjer_headers() -> List[str]:
         '申請承認済総残業時間', '申請承認済法定内残業時間', '申請承認済法定外残業時間'
     ])
     
-    # 乖離時間（3列）- 133列制限のため3列に削減
+    # 乖離時間（4列）
     headers.extend([
         '出勤乖離時間（出勤時刻ー入館時刻）', '退勤乖離時間（退館時刻ー退勤時刻）',
-        '出勤乖離時間（出勤時刻ーPC起動時刻）'
+        '出勤乖離時間（出勤時刻ーPC起動時刻）', '退勤乖離時間（PC停止時刻ー退勤時刻）'
     ])
     
     return headers
@@ -917,6 +920,18 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
     打刻区分IDや勤務状況フラグを適切に設定する。
     """
     headers = create_jinjer_headers()
+    work_start_base = headers.index('出勤1')
+    stamp_start_index = headers.index('打刻区分ID:1')
+    stamp_count = sum(1 for col in headers if col.startswith('打刻区分ID:'))
+    status_columns = ['未打刻', '欠勤', '休日打刻', '休暇打刻', '実績確定状況']
+    status_indices = [headers.index(col) for col in status_columns]
+    labor_indices = {
+        'total': headers.index('総労働時間'),
+        'actual': headers.index('実労働時間'),
+        'break': headers.index('休憩時間'),
+        'overtime_total': headers.index('総残業時間'),
+        'overtime_external': headers.index('法定外残業時間'),
+    }
     csv_content = ','.join(headers) + '\n'
     
     # サービス実績データを読み込み（優先順位順）
@@ -1031,8 +1046,8 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
             
             # 最大10シフトまで対応
             for i, shift in enumerate(merged_shifts[:10]):
-                start_index = 21 + (i * 2)  # 出勤1=21, 出勤2=23, ...
-                end_index = start_index + 1  # 退勤1=22, 退勤2=24, ...
+                start_index = work_start_base + (i * 2)
+                end_index = start_index + 1
                 
                 if start_index < len(headers) and end_index < len(headers):
                     row[start_index] = format_time_for_csv(shift['work_start'])
@@ -1044,20 +1059,18 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
             # 直行・直帰の設定 - 空欄のまま
             # row[100-119]は既に''で初期化されているので何もしない
             
-            # 打刻区分ID（1-10にFALSE）
-            stamp_index = 102  # 打刻区分IDの開始位置（修正：102が正しい位置）
-            for i in range(10):  # 打刻区分ID:1-10にFALSEを設定
-                if stamp_index + i < len(headers):
-                    row[stamp_index + i] = 'FALSE'
+            # 打刻区分ID（全50列）にFALSEを設定
+            for i in range(stamp_count):
+                idx = stamp_start_index + i
+                if idx < len(headers):
+                    row[idx] = 'FALSE'
             
             # 勤務状況フラグ（未打刻、欠勤、休日打刻、休暇打刻、実績確定状況）を空欄に設定
-            status_flag_index = 112  # 勤務状況フラグの開始位置（修正：112が正しい位置）
-            for i in range(5):  # 5つの勤務状況フラグを空欄に設定
-                if status_flag_index + i < len(headers):
-                    row[status_flag_index + i] = ''
+            for idx in status_indices:
+                if idx < len(headers):
+                    row[idx] = ''
             
             # 労働時間の設定（サンプル値）
-            labor_index = 117  # 労働時間計算の開始位置（修正：117が正しい位置）
             if len(merged_shifts) > 0:
                 total_minutes = sum(
                     time_to_minutes(shift['work_end'], True) - time_to_minutes(shift['work_start'], False)
@@ -1065,14 +1078,14 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
                 )
                 total_hours = total_minutes / 60
                 
-                row[labor_index] = f"{int(total_hours)}:{int((total_hours % 1) * 60):02d}"  # 総労働時間
-                row[labor_index + 1] = f"{int(total_hours - 1)}:{int(((total_hours - 1) % 1) * 60):02d}"  # 実労働時間（休憩1時間差し引き）
-                row[labor_index + 2] = '1:00'  # 休憩時間
+                row[labor_indices['total']] = f"{int(total_hours)}:{int((total_hours % 1) * 60):02d}"
+                row[labor_indices['actual']] = f"{int(total_hours - 1)}:{int(((total_hours - 1) % 1) * 60):02d}"
+                row[labor_indices['break']] = '1:00'
                 
                 if total_hours > 8:
                     overtime = total_hours - 8
-                    row[labor_index + 3] = f"{int(overtime)}:{int((overtime % 1) * 60):02d}"  # 総残業時間
-                    row[labor_index + 6] = f"{int(overtime)}:{int((overtime % 1) * 60):02d}"  # 法定外残業時間
+                    row[labor_indices['overtime_total']] = f"{int(overtime)}:{int((overtime % 1) * 60):02d}"
+                    row[labor_indices['overtime_external']] = f"{int(overtime)}:{int((overtime % 1) * 60):02d}"
             
             # CSVの1行として追加
             csv_content += ','.join([
@@ -1089,6 +1102,18 @@ def generate_0_24_jinjer_csv(selected_employees: List[str], target_month: str, a
     打刻区分IDや勤務状況フラグを適切に設定する。
     """
     headers = create_jinjer_headers()
+    work_start_base = headers.index('出勤1')
+    stamp_start_index = headers.index('打刻区分ID:1')
+    stamp_count = sum(1 for col in headers if col.startswith('打刻区分ID:'))
+    status_columns = ['未打刻', '欠勤', '休日打刻', '休暇打刻', '実績確定状況']
+    status_indices = [headers.index(col) for col in status_columns]
+    labor_indices = {
+        'total': headers.index('総労働時間'),
+        'actual': headers.index('実労働時間'),
+        'break': headers.index('休憩時間'),
+        'overtime_total': headers.index('総残業時間'),
+        'overtime_external': headers.index('法定外残業時間'),
+    }
     csv_content = ','.join(headers) + '\n'
     
     # 対象月の全日付を生成
@@ -1120,29 +1145,29 @@ def generate_0_24_jinjer_csv(selected_employees: List[str], target_month: str, a
             row[3] = '1'  # *打刻グループID
             row[4] = '株式会社hot'  # 所属グループ名
             
-            # 0-24データの設定
-            row[21] = '0:00'   # 出勤1
-            row[22] = '24:00'  # 退勤1
+            # 0-24データの設定（出勤1/退勤1のみ使用）
+            if work_start_base < len(headers):
+                row[work_start_base] = '0:00'
+            if work_start_base + 1 < len(headers):
+                row[work_start_base + 1] = '24:00'
             
-            # 打刻区分ID（1-10にFALSE）
-            stamp_index = 102  # 打刻区分IDの開始位置（修正：102が正しい位置）
-            for i in range(10):
-                if stamp_index + i < len(headers):
-                    row[stamp_index + i] = 'FALSE'
+            # 打刻区分ID（全50列）にFALSEを設定
+            for i in range(stamp_count):
+                idx = stamp_start_index + i
+                if idx < len(headers):
+                    row[idx] = 'FALSE'
             
             # 勤務状況フラグを空欄に設定
-            status_flag_index = 112  # 勤務状況フラグの開始位置（修正：112が正しい位置）
-            for i in range(5):
-                if status_flag_index + i < len(headers):
-                    row[status_flag_index + i] = ''
+            for idx in status_indices:
+                if idx < len(headers):
+                    row[idx] = ''
             
             # 労働時間の設定（24時間勤務）
-            labor_index = 117  # 労働時間計算の開始位置（修正：117が正しい位置）
-            row[labor_index] = '24:00'      # 総労働時間
-            row[labor_index + 1] = '23:00'  # 実労働時間（休憩1時間差し引き）
-            row[labor_index + 2] = '1:00'   # 休憩時間
-            row[labor_index + 3] = '16:00'  # 総残業時間（8時間超過分）
-            row[labor_index + 6] = '16:00'  # 法定外残業時間
+            row[labor_indices['total']] = '24:00'
+            row[labor_indices['actual']] = '23:00'
+            row[labor_indices['break']] = '1:00'
+            row[labor_indices['overtime_total']] = '16:00'
+            row[labor_indices['overtime_external']] = '16:00'
             
             # CSVの1行として追加
             csv_content += ','.join([
@@ -1290,7 +1315,7 @@ def show_optimal_attendance_export():
                             data=csv_content.encode('shift_jis', errors='ignore'),
                             file_name=filename,
                             mime="text/csv",
-                            help="jinjer形式（133列）の最適勤怠データCSVファイル"
+                            help="jinjer形式（194列）の最適勤怠データCSVファイル"
                         )
                         st.success(f"✅ CSV生成完了！{len(st.session_state.selected_employees_export)}名の勤怠データを出力しました。")
                         lines = csv_content.count('\n') - 1
@@ -1310,7 +1335,7 @@ def show_optimal_attendance_export():
                     adjusted_df, rounded_rows, rounded_slots = auto_round_break_times(attendance_df)
                     csv_buffer = io.StringIO()
                     adjusted_df.to_csv(csv_buffer, index=False)
-                    csv_bytes = csv_buffer.getvalue().encode('cp932', errors='ignore')
+                    csv_bytes = csv_buffer.getvalue().encode('shift_jis', errors='ignore')
                     
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     filename = f"最適休憩時間_{target_month_str}_{timestamp}.csv"
@@ -1417,7 +1442,7 @@ def show_optimal_attendance_export():
                             if download_df.empty:
                                 st.warning("指定された従業員に該当するデータがありませんでした。空のCSVを出力します。")
                             download_df.to_csv(csv_buffer, index=False)
-                            csv_bytes = csv_buffer.getvalue().encode('cp932', errors='ignore')
+                            csv_bytes = csv_buffer.getvalue().encode('shift_jis', errors='ignore')
                             
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             filename = f"休憩時間一括変更_{target_month_str}_{timestamp}.csv"

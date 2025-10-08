@@ -46,7 +46,8 @@ from optimal_attendance_export import (
     merge_overlapping_shifts,
     get_employee_id,
     generate_jinjer_csv,
-    show_optimal_attendance_export
+    show_optimal_attendance_export,
+    find_default_attendance_csv
 )
 
 # 詳細分析機能（関数定義）
@@ -733,11 +734,11 @@ with tab1:
             st.error("サービス実態CSVを1件以上アップロードしてください。")
             st.stop()
         
-        default_attendance_path = os.path.join(os.path.dirname(__file__), "input", "勤怠履歴.csv")
+        default_attendance_path = find_default_attendance_csv()
         use_default_attendance = False
         
         if not att_file:
-            if os.path.exists(default_attendance_path):
+            if default_attendance_path and default_attendance_path.exists():
                 use_default_attendance = True
                 st.info("勤怠履歴CSVが未アップロードのため、`input/勤怠履歴.csv` を使用します。")
             else:
@@ -790,12 +791,12 @@ with tab1:
             attendance_filename = None
             actual_att_path = None
             
-            if use_default_attendance:
-                attendance_filename = os.path.basename(default_attendance_path)
+            if use_default_attendance and default_attendance_path:
+                attendance_filename = default_attendance_path.name
                 actual_att_path = os.path.join(indir, attendance_filename)
                 
                 try:
-                    shutil.copyfile(default_attendance_path, actual_att_path)
+                    shutil.copyfile(str(default_attendance_path), actual_att_path)
                 except Exception as e:
                     st.error(f"勤怠履歴CSVのコピーに失敗しました: {str(e)}")
                     st.stop()
@@ -804,14 +805,14 @@ with tab1:
                 attendance_df = None
                 for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
                     try:
-                        attendance_df = pd.read_csv(default_attendance_path, encoding=encoding)
+                        attendance_df = pd.read_csv(str(default_attendance_path), encoding=encoding)
                         break
                     except UnicodeDecodeError:
                         continue
                 
                 if attendance_df is not None:
                     st.session_state.attendance_df = attendance_df
-                    st.session_state.attendance_file_path = default_attendance_path
+                    st.session_state.attendance_file_path = str(default_attendance_path)
                 else:
                     st.warning("勤怠履歴CSV（既定ファイル）の読み込みに失敗しました。既定の処理を継続します。")
             else:

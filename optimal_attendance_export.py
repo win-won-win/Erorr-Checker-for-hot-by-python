@@ -16,6 +16,27 @@ import re
 from src import normalize_name, parse_date_any, parse_minute_of_day
 import os
 import glob
+from pathlib import Path
+
+
+def find_default_attendance_csv() -> Optional[Path]:
+    """リポジトリ/カレントディレクトリ配下から勤怠履歴.csvを探索"""
+    candidates = [
+        Path(__file__).resolve().parent / "input" / "勤怠履歴.csv",
+        Path.cwd() / "input" / "勤怠履歴.csv",
+    ]
+    seen = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except FileNotFoundError:
+            resolved = candidate
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists():
+            return resolved
+    return None
 
 def create_jinjer_headers() -> List[str]:
     """jinjer形式CSVのヘッダー（194列）を生成"""
@@ -433,7 +454,12 @@ def merge_overlapping_shifts(shifts: List[Dict]) -> List[Dict]:
 def load_employee_id_mapping(attendance_file_path: str = 'input/勤怠履歴.csv') -> Dict[str, str]:
     """勤怠CSVから従業員名と従業員IDのマッピングを作成"""
     try:
-        df = pd.read_csv(attendance_file_path, encoding='cp932')
+        path = Path(attendance_file_path)
+        if not path.exists():
+            fallback = find_default_attendance_csv()
+            if fallback:
+                path = fallback
+        df = pd.read_csv(path, encoding='cp932')
         
         # 名前と従業員IDの組み合わせを取得（重複を除去）
         mapping = {}
@@ -1187,7 +1213,7 @@ def show_optimal_attendance_export():
     # 勤怠データの読み込み確認
     try:
         attendance_df = None
-        attendance_source = "input/勤怠履歴.csv"
+        attendance_source: Optional[str] = None
         
         if hasattr(st, 'session_state'):
             if st.session_state.get('attendance_df') is not None:
@@ -1206,14 +1232,16 @@ def show_optimal_attendance_export():
         
         if attendance_df is None:
             # セッションに無い場合は既定のinputフォルダを参照
-            attendance_file_path = 'input/勤怠履歴.csv'
-            attendance_source = attendance_file_path
-            for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
-                try:
-                    attendance_df = pd.read_csv(attendance_file_path, encoding=encoding)
-                    break
-                except UnicodeDecodeError:
-                    continue
+            default_path = find_default_attendance_csv()
+            if default_path:
+                attendance_file_path = str(default_path)
+                attendance_source = attendance_file_path
+                for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
+                    try:
+                        attendance_df = pd.read_csv(attendance_file_path, encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
         
         if attendance_df is None:
             st.error("勤怠データの読み込みに失敗しました。")
@@ -1230,7 +1258,8 @@ def show_optimal_attendance_export():
             st.error("勤怠データから従業員情報を取得できませんでした。")
             return
         
-        st.success(f"勤怠データを読み込みました（ソース: {attendance_source}）。利用可能な従業員: {len(available_employees)}名")
+        source_label = attendance_source or "不明"
+        st.success(f"勤怠データを読み込みました（ソース: {source_label}）。利用可能な従業員: {len(available_employees)}名")
         
         # 利用可能な年月を表示
         try:

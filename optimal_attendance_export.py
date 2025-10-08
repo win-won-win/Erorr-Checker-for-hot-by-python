@@ -216,6 +216,21 @@ def create_jinjer_headers() -> List[str]:
     
     return headers
 
+
+def dataframe_to_jinjer_csv_bytes(df: pd.DataFrame, encoding: str = 'shift_jis') -> bytes:
+    """
+    DataFrameをjinjer形式のヘッダー順に並べ替えてCSVバイト列に変換する。
+    指定ヘッダーに含まれない列は削除し、欠損は空文字で埋める。
+    """
+    headers = create_jinjer_headers()
+    normalized_df = df.copy()
+    normalized_df = normalized_df.reindex(columns=headers, fill_value='')
+    normalized_df = normalized_df.fillna('')
+    
+    buffer = io.StringIO()
+    normalized_df.to_csv(buffer, index=False)
+    return buffer.getvalue().encode(encoding, errors='ignore')
+
 def time_to_minutes(time_str: str, is_end_time: bool = False) -> int:
     """時間を分に変換（24時間対応）"""
     if not time_str or time_str == '':
@@ -1452,9 +1467,7 @@ def show_optimal_attendance_export():
             with st.spinner("休憩時間を補正しています..."):
                 try:
                     adjusted_df, rounded_rows, rounded_slots = auto_round_break_times(attendance_df)
-                    csv_buffer = io.StringIO()
-                    adjusted_df.to_csv(csv_buffer, index=False)
-                    csv_bytes = csv_buffer.getvalue().encode('shift_jis', errors='ignore')
+                    csv_bytes = dataframe_to_jinjer_csv_bytes(adjusted_df)
                     
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     filename = f"最適休憩時間_{target_month_str}_{timestamp}.csv"
@@ -1549,7 +1562,6 @@ def show_optimal_attendance_export():
                                 new_end_formatted
                             )
                             
-                            csv_buffer = io.StringIO()
                             download_df = overridden_df[
                                 build_employee_month_mask(
                                     overridden_df,
@@ -1560,8 +1572,7 @@ def show_optimal_attendance_export():
                             
                             if download_df.empty:
                                 st.warning("指定された従業員に該当するデータがありませんでした。空のCSVを出力します。")
-                            download_df.to_csv(csv_buffer, index=False)
-                            csv_bytes = csv_buffer.getvalue().encode('shift_jis', errors='ignore')
+                            csv_bytes = dataframe_to_jinjer_csv_bytes(download_df)
                             
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             filename = f"休憩時間一括変更_{target_month_str}_{timestamp}.csv"

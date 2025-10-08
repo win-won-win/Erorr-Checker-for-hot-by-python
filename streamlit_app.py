@@ -722,12 +722,15 @@ with tab1:
     
     st.subheader("勤怠履歴CSV")
     st.info("CSVファイルをここにドラッグ&ドロップするか、下のボタンからファイルを選択してください")
-    att_file = st.file_uploader("ファイル選択", type=["csv"], key="att", label_visibility="collapsed")
+    att_files = st.file_uploader("ファイル選択", type=["csv"], accept_multiple_files=True, key="att", label_visibility="collapsed")
     
-    if att_file:
-        file_size = len(att_file.getvalue()) / 1024
-        size_str = f"{file_size:.1f}KB" if file_size < 1024 else f"{file_size/1024:.1f}MB"
-        st.write(f"• {att_file.name} ({size_str})")
+    if att_files:
+        for uploaded in att_files:
+            file_size = len(uploaded.getvalue()) / 1024
+            size_str = f"{file_size:.1f}KB" if file_size < 1024 else f"{file_size/1024:.1f}MB"
+            st.write(f"• {uploaded.name} ({size_str})")
+        if len(att_files) > 1:
+            st.caption("複数の勤怠CSVを選択すると自動で結合してから処理します。")
     
     run = st.button("エラーチェック実行", type="primary", use_container_width=True)
     
@@ -739,7 +742,7 @@ with tab1:
         default_attendance_path = find_default_attendance_csv()
         use_default_attendance = False
         
-        if not att_file:
+        if not att_files:
             use_default_attendance = True
             if default_attendance_path and default_attendance_path.exists():
                 st.info("勤怠履歴CSVが未アップロードのため、`input/勤怠履歴.csv` を使用します。")
@@ -825,32 +828,63 @@ with tab1:
                 st.session_state.attendance_df = attendance_df
                 st.session_state.attendance_file_path = actual_att_path
             else:
-                attendance_filename = att_file.name
-                att_file_path = os.path.join(indir, attendance_filename)
-                try:
-                    actual_att_path, att_debug_info = save_upload_to(att_file_path, att_file)
-                    if not os.path.exists(actual_att_path):
-                        st.error("勤怠履歴CSV保存失敗")
-                        st.stop()
-                    attendance_filename = os.path.basename(actual_att_path)
-                    
-                    # 勤怠履歴CSVを読み込んでセッション状態に保存（複数エンコーディング試行）
-                    attendance_df = None
-                    for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
+                attendance_dfs = []
+                attendance_source_names = [uploaded.name for uploaded in att_files]
+                encodings = ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']
+                
+                for uploaded in att_files:
+                    file_bytes = uploaded.getvalue()
+                    df = None
+                    for encoding in encodings:
                         try:
-                            attendance_df = pd.read_csv(actual_att_path, encoding=encoding)
+                            df = pd.read_csv(io.BytesIO(file_bytes), encoding=encoding)
                             break
                         except UnicodeDecodeError:
                             continue
-                    
-                    if attendance_df is not None:
+                        except Exception as e:
+                            st.error(f"勤怠履歴CSVの読み込みに失敗しました ({uploaded.name}): {str(e)}")
+                            st.stop()
+                    if df is None:
+                        st.error(f"勤怠履歴CSVの読み込みに失敗しました ({uploaded.name}). 対応エンコーディング: {', '.join(encodings)}")
+                        st.stop()
+                    attendance_dfs.append(df)
+                    if show_debug_logs:
+                        st.write(f"勤怠CSV読込成功: {uploaded.name} (行数: {len(df)})")
+                
+                if len(attendance_dfs) == 1:
+                    single_file = att_files[0]
+                    attendance_filename = single_file.name
+                    att_file_path = os.path.join(indir, attendance_filename)
+                    try:
+                        actual_att_path, att_debug_info = save_upload_to(att_file_path, single_file)
+                        if not os.path.exists(actual_att_path):
+                            st.error("勤怠履歴CSV保存失敗")
+                            st.stop()
+                        attendance_filename = os.path.basename(actual_att_path)
+                        attendance_df = attendance_dfs[0]
                         st.session_state.attendance_df = attendance_df
                         st.session_state.attendance_file_path = actual_att_path
-                    else:
-                        st.warning("勤怠履歴CSVの読み込みに失敗しました。既定の処理を継続します。")
-                except Exception as e:
-                    st.error(f"勤怠履歴CSV保存エラー: {str(e)}")
-                    st.stop()
+                    except Exception as e:
+                        st.error(f"勤怠履歴CSV保存エラー: {str(e)}")
+                        st.stop()
+                else:
+                    try:
+                        attendance_df = pd.concat(attendance_dfs, ignore_index=True)
+                    except Exception as e:
+                        st.error(f"勤怠履歴CSVの結合に失敗しました: {str(e)}")
+                        st.stop()
+                    attendance_filename = "combined_attendance.csv"
+                    actual_att_path = os.path.join(indir, attendance_filename)
+                    try:
+                        attendance_df.to_csv(actual_att_path, index=False, encoding="utf-8-sig")
+                    except Exception as e:
+                        st.error(f"結合後の勤怠履歴CSVの保存に失敗しました: {str(e)}")
+                        st.stop()
+                    attendance_filename = os.path.basename(actual_att_path)
+                    st.session_state.attendance_df = attendance_df
+                    st.session_state.attendance_file_path = actual_att_path
+                    if show_debug_logs:
+                        st.write(f"勤怠CSVを結合: {', '.join(attendance_source_names)} -> {attendance_filename}")
             
             # 保存されたファイルの最終確認
             all_files = os.listdir(indir)

@@ -38,6 +38,56 @@ def find_default_attendance_csv() -> Optional[Path]:
             return resolved
     return None
 
+
+def _read_attendance_csv(path: Path) -> Optional[pd.DataFrame]:
+    """複数エンコーディングを試して勤怠CSVを読み込む"""
+    encodings = ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']
+    for encoding in encodings:
+        try:
+            return pd.read_csv(path, encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def build_builtin_attendance_dataframe() -> pd.DataFrame:
+    """組み込みの勤怠データ（0:00-24:00のダミー）を生成"""
+    headers = create_jinjer_headers()
+    employees = [
+        ("デフォルト太郎", "EMP000"),
+        ("デフォルト花子", "EMP001"),
+    ]
+    dates = [f"2025-09-{day:02d}" for day in range(1, 6)]
+    rows: List[Dict[str, Any]] = []
+
+    for name, emp_id in employees:
+        for date in dates:
+            row = {col: '' for col in headers}
+            row['名前'] = name
+            row['*従業員ID'] = emp_id
+            row['*年月日'] = date
+            row['出勤1'] = '0:00'
+            row['退勤1'] = '24:00'
+            # 打刻区分ID、労働時間などの必須カラムを設定
+            for i in range(1, 51):
+                row[f'打刻区分ID:{i}'] = 'FALSE'
+            row['総労働時間'] = '24:00'
+            row['実労働時間'] = '23:00'
+            row['休憩時間'] = '1:00'
+            row['総残業時間'] = '16:00'
+            row['法定外残業時間'] = '16:00'
+            rows.append(row)
+
+    return pd.DataFrame(rows, columns=headers)
+
+
+def get_builtin_attendance_csv_bytes(encoding: str = 'shift_jis') -> bytes:
+    """組み込み勤怠データを指定エンコードのCSVバイト列として取得"""
+    df = build_builtin_attendance_dataframe()
+    buffer = io.StringIO()
+    df.to_csv(buffer, index=False)
+    return buffer.getvalue().encode(encoding, errors='ignore')
+
 def create_jinjer_headers() -> List[str]:
     """jinjer形式CSVのヘッダー（194列）を生成"""
     headers = []
@@ -453,32 +503,32 @@ def merge_overlapping_shifts(shifts: List[Dict]) -> List[Dict]:
 
 def load_employee_id_mapping(attendance_file_path: str = 'input/勤怠履歴.csv') -> Dict[str, str]:
     """勤怠CSVから従業員名と従業員IDのマッピングを作成"""
-    try:
-        path = Path(attendance_file_path)
-        if not path.exists():
-            fallback = find_default_attendance_csv()
-            if fallback:
-                path = fallback
-        df = pd.read_csv(path, encoding='cp932')
+    df: Optional[pd.DataFrame] = None
+
+    path = Path(attendance_file_path)
+    if path.exists():
+        df = _read_attendance_csv(path)
+
+    if df is None:
+        fallback = find_default_attendance_csv()
+        if fallback and fallback.exists():
+            df = _read_attendance_csv(fallback)
+
+    if df is None:
+        df = build_builtin_attendance_dataframe()
+
+    mapping: Dict[str, str] = {}
+    for _, row in df.iterrows():
+        name = str(row.get('名前', '')).strip()
+        emp_id = str(row.get('*従業員ID', '')).strip()
         
-        # 名前と従業員IDの組み合わせを取得（重複を除去）
-        mapping = {}
-        for _, row in df.iterrows():
-            name = str(row.get('名前', '')).strip()
-            emp_id = str(row.get('*従業員ID', '')).strip()
-            
-            if name and emp_id and name != 'nan' and emp_id != 'nan':
-                # 名前の正規化を行う
-                normalized_name = normalize_name(name)
-                if normalized_name:
-                    mapping[normalized_name] = emp_id
-                    # 元の名前でもマッピングを作成（正規化前の名前でも検索できるように）
-                    mapping[name] = emp_id
-        
-        return mapping
-    except Exception as e:
-        print(f"勤怠CSVの読み込みエラー: {e}")
-        return {}
+        if name and emp_id and name != 'nan' and emp_id != 'nan':
+            normalized_name = normalize_name(name)
+            if normalized_name:
+                mapping[normalized_name] = emp_id
+                mapping[name] = emp_id
+    
+    return mapping
 
 def convert_japanese_date_to_iso(japanese_date: str) -> str:
     """和暦日付を西暦ISO形式に変換
@@ -1244,8 +1294,8 @@ def show_optimal_attendance_export():
                         continue
         
         if attendance_df is None:
-            st.error("勤怠データの読み込みに失敗しました。")
-            return
+            attendance_df = build_builtin_attendance_dataframe()
+            attendance_source = "組み込みデフォルト"
         
         # 利用可能な従業員リストを取得
         available_employees = []

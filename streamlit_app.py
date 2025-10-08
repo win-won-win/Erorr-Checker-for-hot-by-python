@@ -47,7 +47,9 @@ from optimal_attendance_export import (
     get_employee_id,
     generate_jinjer_csv,
     show_optimal_attendance_export,
-    find_default_attendance_csv
+    find_default_attendance_csv,
+    build_builtin_attendance_dataframe,
+    get_builtin_attendance_csv_bytes
 )
 
 # 詳細分析機能（関数定義）
@@ -738,12 +740,11 @@ with tab1:
         use_default_attendance = False
         
         if not att_file:
+            use_default_attendance = True
             if default_attendance_path and default_attendance_path.exists():
-                use_default_attendance = True
                 st.info("勤怠履歴CSVが未アップロードのため、`input/勤怠履歴.csv` を使用します。")
             else:
-                st.error("勤怠履歴CSVをアップロードするか、inputフォルダに勤怠履歴.csvを配置してください。")
-                st.stop()
+                st.info("勤怠履歴CSVが未アップロードのため、組み込みの勤怠データを使用します。")
 
         with st.spinner("処理中..."):
             # 作業用ディレクトリ
@@ -791,30 +792,37 @@ with tab1:
             attendance_filename = None
             actual_att_path = None
             
-            if use_default_attendance and default_attendance_path:
-                attendance_filename = default_attendance_path.name
-                actual_att_path = os.path.join(indir, attendance_filename)
-                
-                try:
-                    shutil.copyfile(str(default_attendance_path), actual_att_path)
-                except Exception as e:
-                    st.error(f"勤怠履歴CSVのコピーに失敗しました: {str(e)}")
-                    st.stop()
-                
-                # 勤怠履歴CSVを読み込んでセッション状態に保存（複数エンコーディング試行）
-                attendance_df = None
-                for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
+            if use_default_attendance:
+                if default_attendance_path and default_attendance_path.exists():
+                    attendance_filename = default_attendance_path.name
+                    actual_att_path = os.path.join(indir, attendance_filename)
                     try:
-                        attendance_df = pd.read_csv(str(default_attendance_path), encoding=encoding)
-                        break
-                    except UnicodeDecodeError:
-                        continue
-                
-                if attendance_df is not None:
-                    st.session_state.attendance_df = attendance_df
-                    st.session_state.attendance_file_path = str(default_attendance_path)
+                        shutil.copyfile(str(default_attendance_path), actual_att_path)
+                    except Exception as e:
+                        st.error(f"勤怠履歴CSVのコピーに失敗しました: {str(e)}")
+                        st.stop()
+                    attendance_df = None
+                    for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
+                        try:
+                            attendance_df = pd.read_csv(str(default_attendance_path), encoding=encoding)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    if attendance_df is None:
+                        attendance_df = build_builtin_attendance_dataframe()
                 else:
-                    st.warning("勤怠履歴CSV（既定ファイル）の読み込みに失敗しました。既定の処理を継続します。")
+                    attendance_filename = "勤怠履歴.csv"
+                    actual_att_path = os.path.join(indir, attendance_filename)
+                    try:
+                        builtin_bytes = get_builtin_attendance_csv_bytes()
+                        with open(actual_att_path, "wb") as f:
+                            f.write(builtin_bytes)
+                        attendance_df = build_builtin_attendance_dataframe()
+                    except Exception as e:
+                        st.error(f"組み込み勤怠データの準備に失敗しました: {str(e)}")
+                        st.stop()
+                st.session_state.attendance_df = attendance_df
+                st.session_state.attendance_file_path = actual_att_path
             else:
                 attendance_filename = att_file.name
                 att_file_path = os.path.join(indir, attendance_filename)

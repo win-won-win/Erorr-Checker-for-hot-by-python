@@ -8,11 +8,21 @@ import shutil
 import subprocess
 import sys
 import re
+import json
+import hashlib
+import uuid
 from datetime import datetime
 import calendar
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
+from functools import lru_cache
+from pathlib import Path
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 from src import normalize_name
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None  # Pillow未インストール時は画像を使わないフォールバック
 
 # アイコン定義（洗練されたUnicodeアイコン）
 ICONS = {
@@ -317,6 +327,207 @@ def save_upload_to(path: str, uploaded_file):
     except Exception as e:
         debug_info.append(f"エラー発生: {str(e)}")
         raise Exception(f"ファイル保存エラー ({path}): {str(e)}\nデバッグ情報: {'; '.join(debug_info)}")
+
+def resolve_upload_cache_dir() -> Tuple[Path, Path, str]:
+    """
+    キャッシュ保存先を決定する。
+    1. Desktop/ChofukuChecker_upload_cache を優先して作成・使用。
+    2. Desktop が利用できない場合はホームディレクトリ配下に隠しフォルダを用意して使用。
+    """
+    desktop_dir = Path.home() / "Desktop" / "エラーチェック選択記憶用ファイル"
+    try:
+        desktop_dir.mkdir(parents=True, exist_ok=True)
+        display_path = str(desktop_dir)
+        return desktop_dir, desktop_dir / "manifest.json", display_path
+    except Exception:
+        pass
+
+    fallback_dir = Path.home() / ".streamlit_upload_cache"
+    fallback_dir.mkdir(parents=True, exist_ok=True)
+    display_path = str(fallback_dir)
+    return fallback_dir, fallback_dir / "manifest.json", display_path
+
+
+UPLOAD_CACHE_DIR, UPLOAD_CACHE_MANIFEST, _upload_cache_display_raw = resolve_upload_cache_dir()
+_home_prefix = str(Path.home())
+if _upload_cache_display_raw.startswith(_home_prefix):
+    UPLOAD_CACHE_DISPLAY = "~" + _upload_cache_display_raw[len(_home_prefix):]
+else:
+    UPLOAD_CACHE_DISPLAY = _upload_cache_display_raw
+
+
+def _default_upload_manifest() -> Dict[str, List[Dict[str, Any]]]:
+    return {"service": [], "attendance": []}
+
+
+def ensure_upload_cache_dir() -> None:
+    UPLOAD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def read_upload_manifest() -> Dict[str, List[Dict[str, Any]]]:
+    ensure_upload_cache_dir()
+    if not UPLOAD_CACHE_MANIFEST.exists():
+        write_upload_manifest(_default_upload_manifest())
+    try:
+        with open(UPLOAD_CACHE_MANIFEST, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        data = _default_upload_manifest()
+        write_upload_manifest(data)
+    for key in ["service", "attendance"]:
+        if key not in data or not isinstance(data.get(key), list):
+            data[key] = []
+    return data
+
+
+def write_upload_manifest(data: Dict[str, List[Dict[str, Any]]]) -> None:
+    ensure_upload_cache_dir()
+    with open(UPLOAD_CACHE_MANIFEST, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+class CachedUploadedFile:
+    """st.file_uploaderで選択したファイルをローカルキャッシュから再生成するためのラッパー"""
+
+    def __init__(self, name: str, stored_path: Path, size: Optional[int] = None, saved_at: Optional[str] = None):
+        self.name = name
+        self._stored_path = stored_path
+        self._size = size
+        self.saved_at = saved_at
+        self._data: Optional[bytes] = None
+
+    def _load(self) -> bytes:
+        if self._data is None:
+            self._data = self._stored_path.read_bytes()
+            self._size = len(self._data)
+        return self._data
+
+    def getvalue(self) -> bytes:
+        return self._load()
+
+    def getbuffer(self):
+        return memoryview(self._load())
+
+    def read(self) -> bytes:
+        return self._load()
+
+    @property
+    def size(self) -> int:
+        if self._size is None:
+            try:
+                self._size = self._stored_path.stat().st_size
+            except FileNotFoundError:
+                self._size = 0
+        return self._size
+
+    def __len__(self) -> int:
+        return self.size
+
+
+def save_uploaded_files_to_cache(category: str, uploaded_files: List[Any]) -> None:
+    if not uploaded_files:
+        return
+
+    manifest = read_upload_manifest()
+    existing_entries = list(manifest.get(category, []))
+    ensure_upload_cache_dir()
+
+    for uploaded in uploaded_files:
+        safe_name = os.path.basename(getattr(uploaded, "name", "uploaded.csv"))
+        file_bytes = uploaded.getvalue()
+        digest = hashlib.sha1(file_bytes).hexdigest()
+        ext = os.path.splitext(safe_name)[1]
+        stored_basename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex}_{digest[:8]}"
+        stored_name = f"{stored_basename}{ext}" if ext else stored_basename
+        stored_path = UPLOAD_CACHE_DIR / stored_name
+        if stored_path.exists():
+            # 既存ファイルと衝突するはずがないが念のため削除
+            stored_path.unlink()
+
+        with open(stored_path, "wb") as f:
+            f.write(file_bytes)
+
+        # 同名の既存エントリを削除して差し替える
+        filtered_entries = []
+        for entry in existing_entries:
+            if entry.get("name") == safe_name:
+                old_stored = entry.get("stored_name")
+                if old_stored:
+                    old_path = UPLOAD_CACHE_DIR / old_stored
+                    try:
+                        old_path.unlink()
+                    except FileNotFoundError:
+                        pass
+                continue
+            filtered_entries.append(entry)
+        existing_entries = filtered_entries
+
+        existing_entries.append({
+            "name": safe_name,
+            "stored_name": stored_name,
+            "size": len(file_bytes),
+            "saved_at": datetime.now().isoformat()
+        })
+
+    manifest[category] = existing_entries
+    write_upload_manifest(manifest)
+
+
+def load_cached_uploaded_files(category: str) -> Tuple[List[CachedUploadedFile], List[Dict[str, Any]]]:
+    manifest = read_upload_manifest()
+    entries = manifest.get(category, [])
+    loaded_files: List[CachedUploadedFile] = []
+    valid_entries: List[Dict[str, Any]] = []
+
+    for entry in entries:
+        stored_name = entry.get("stored_name")
+        if not stored_name:
+            continue
+        stored_path = UPLOAD_CACHE_DIR / stored_name
+        if not stored_path.exists():
+            continue
+        cached_file = CachedUploadedFile(
+            name=entry.get("name", stored_name),
+            stored_path=stored_path,
+            size=entry.get("size"),
+            saved_at=entry.get("saved_at")
+        )
+        loaded_files.append(cached_file)
+        valid_entries.append(entry)
+
+    if len(valid_entries) != len(entries):
+        manifest[category] = valid_entries
+        write_upload_manifest(manifest)
+
+    return loaded_files, valid_entries
+
+
+def remove_cached_file(category: str, stored_name: str) -> bool:
+    manifest = read_upload_manifest()
+    entries = manifest.get(category, [])
+    if not entries:
+        return False
+
+    remaining_entries = []
+    removed = False
+    for entry in entries:
+        entry_stored = entry.get("stored_name")
+        if not removed and entry_stored == stored_name:
+            removed = True
+            if entry_stored:
+                path = UPLOAD_CACHE_DIR / entry_stored
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+            continue
+        remaining_entries.append(entry)
+
+    if removed:
+        manifest[category] = remaining_entries
+        write_upload_manifest(manifest)
+    return removed
+
 
 def collect_summary(result_paths):
     summary_rows = []
@@ -641,8 +852,124 @@ def create_styled_grid(df):
     
     # グリッドオプションを構築
     gridOptions = gb.build()
-    
+
     return gridOptions
+
+def _safe_text(value: Any) -> str:
+    """NaNやNoneを空文字列に正規化し、表示しやすいテキストを返す。"""
+    if value is None:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if not text or text.lower() == "nan":
+        return ""
+    return text
+
+@lru_cache(maxsize=32)
+def _get_indicator_image(width: int, height: int, color: Tuple[int, int, int]) -> Optional[Any]:
+    """指定色・サイズの縦ライン画像を生成（Pillow未導入ならNoneを返す）。"""
+    if Image is None:
+        return None
+    return Image.new("RGB", (width, height), color)
+
+def show_card_view(df: pd.DataFrame) -> None:
+    """
+    AgGridと同じデータをカード形式で表示する。
+    CSSやunsafe_allow_htmlを使わず、標準コンポーネントのみで構成する。
+    """
+    st.caption(f"{len(df)}件をリスト表示中")
+
+    for idx, (_, row) in enumerate(df.iterrows(), start=1):
+        date_text = _safe_text(row.get("日付")) or "日付未設定"
+        start_time = _safe_text(row.get("開始時間")) or "ー"
+        end_time = _safe_text(row.get("終了時間")) or "ー"
+        user_name = _safe_text(row.get("利用者名")) or "利用者不明"
+        staff_name = _safe_text(row.get("担当所員")) or "担当未設定"
+        facility_name = _safe_text(row.get("重複エラー事業所名")) or "事業所未設定"
+        alt_staff = _safe_text(row.get("代替従業員リスト")) or "ー"
+
+        duplicate_user = _safe_text(row.get("重複利用者名"))
+        duplicate_service = _safe_text(row.get("重複サービス時間"))
+        duplicate_minutes = _safe_text(row.get("重複時間"))
+        penalty_minutes = _safe_text(row.get("懲戒時間"))
+        service_detail = _safe_text(row.get("サービス詳細"))
+        error_shift = _safe_text(row.get("エラー職員勤務時間"))
+        alternate_shift = _safe_text(row.get("代替職員勤務時間"))
+        shift_detail = _safe_text(row.get("勤務時間詳細"))
+        off_detail = _safe_text(row.get("勤務時間外詳細"))
+        uncovered = _safe_text(row.get("未カバー区間"))
+        coverage = _safe_text(row.get("カバー状況"))
+        error_mark = _safe_text(row.get("エラー"))
+        category = _safe_text(row.get("カテゴリ"))
+
+        detail_lines: List[str] = []
+        if facility_name:
+            detail_lines.append(f"重複エラー事業所名: {facility_name}")
+        for label, value in [
+            ("エラー", error_mark),
+            ("カテゴリ", category),
+            ("カバー状況", coverage),
+            ("重複利用者", duplicate_user),
+            ("重複サービス", duplicate_service),
+            ("重複時間", duplicate_minutes),
+            ("懲戒時間", penalty_minutes),
+            ("サービス詳細", service_detail),
+            ("勤務時間詳細", error_shift or shift_detail),
+            ("代替職員勤務時間", alternate_shift),
+            ("勤務時間外詳細", off_detail),
+            ("未カバー区間", uncovered),
+        ]:
+            if value:
+                detail_lines.append(f"{label}: {value}")
+
+        tooltip_text = "\n".join(detail_lines) if detail_lines else "追加の詳細情報はありません。"
+
+        indicator_color: Optional[Tuple[int, int, int]] = None
+        indicator_fallback = None
+        if facility_name and "さくら" in facility_name:
+            indicator_color = (255, 224, 236)  # 薄いピンク
+            indicator_fallback = ":red[┃]"
+        elif facility_name and "ほっと" in facility_name:
+            indicator_color = (224, 238, 255)  # 薄い青
+            indicator_fallback = ":blue[┃]"
+
+        left_line_count = 1  # 日付行
+        left_line_count += max(1, staff_name.count('\n') + 1)
+        left_line_count += max(1, alt_staff.count('\n') + 1)
+
+        right_line_count = max(1, user_name.count('\n') + 1) + 1  # +1はℹ️ボタン分
+
+        total_lines = max(left_line_count + 1, right_line_count)
+        line_height_px = 24
+        indicator_height = max(36, int(total_lines * line_height_px * 1.0))
+
+        with st.container(border=True):
+            row_cols = st.columns([0.2, 5, 2])
+            with row_cols[0]:
+                if indicator_color:
+                    indicator_img = _get_indicator_image(12, indicator_height, indicator_color)
+                    if indicator_img is not None:
+                        st.image(indicator_img, width=12, clamp=True)
+                    elif indicator_fallback:
+                        st.markdown(indicator_fallback)
+                else:
+                    st.write("")
+            with row_cols[1]:
+                st.markdown(f"**{date_text}　{start_time} 〜 {end_time}**")
+                st.caption(f"担当者: {staff_name}")
+                st.caption(f"代替従業員: {alt_staff}")
+            with row_cols[2]:
+                top_cols = st.columns([4, 1])
+                with top_cols[0]:
+                    st.markdown(f"**{user_name}**")
+                with top_cols[1]:
+                    st.button(
+                        "ℹ️",
+                        key=f"detail_hint_{idx}",
+                        help=tooltip_text,
+                        disabled=True
+                    )
 
 # ページ設定
 st.set_page_config(page_title="重複チェッカー for hot", layout="wide")
@@ -712,25 +1039,67 @@ with tab1:
     
     st.subheader("サービス実態CSV（複数可）")
     st.info("CSVファイルをここにドラッグ&ドロップするか、下のボタンからファイルを選択してください")
-    svc_files = st.file_uploader("ファイル選択", type=["csv"], accept_multiple_files=True, key="svc", label_visibility="collapsed")
-    
-    if svc_files:
-        for file in svc_files:
+    cached_service_files, cached_service_meta = load_cached_uploaded_files("service")
+    svc_uploaded_files = st.file_uploader("ファイル選択", type=["csv"], accept_multiple_files=True, key="svc", label_visibility="collapsed")
+    svc_uploaded_files = list(svc_uploaded_files) if svc_uploaded_files else []
+
+    if svc_uploaded_files:
+        for file in svc_uploaded_files:
             file_size = len(file.getvalue()) / 1024
             size_str = f"{file_size:.1f}KB" if file_size < 1024 else f"{file_size/1024:.1f}MB"
             st.write(f"• {file.name} ({size_str})")
+        save_uploaded_files_to_cache("service", svc_uploaded_files)
+        cached_service_files, cached_service_meta = load_cached_uploaded_files("service")
+
+    if cached_service_files:
+        st.caption("前回アップロードしたサービスCSVを自動で使用します。")
+        for meta in cached_service_meta:
+            file_size = (meta.get("size") or 0) / 1024
+            size_str = f"{file_size:.1f}KB" if file_size < 1024 else f"{file_size/1024:.1f}MB"
+            cols = st.columns([12, 1])
+            with cols[0]:
+                st.write(f"• {meta.get('name')} ({size_str})")
+            with cols[1]:
+                button_label = "×"
+                if st.button(button_label, key=f"remove_service_{meta.get('stored_name')}"):
+                    if remove_cached_file("service", meta.get("stored_name")):
+                        st.experimental_rerun()
+
+    svc_files: List[Any] = list(cached_service_files)
     
     st.subheader("勤怠履歴CSV")
     st.info("CSVファイルをここにドラッグ&ドロップするか、下のボタンからファイルを選択してください")
-    att_files = st.file_uploader("ファイル選択", type=["csv"], accept_multiple_files=True, key="att", label_visibility="collapsed")
+    cached_attendance_files, cached_attendance_meta = load_cached_uploaded_files("attendance")
+    att_uploaded_files = st.file_uploader("ファイル選択", type=["csv"], accept_multiple_files=True, key="att", label_visibility="collapsed")
+    att_uploaded_files = list(att_uploaded_files) if att_uploaded_files else []
     
-    if att_files:
-        for uploaded in att_files:
+    if att_uploaded_files:
+        for uploaded in att_uploaded_files:
             file_size = len(uploaded.getvalue()) / 1024
             size_str = f"{file_size:.1f}KB" if file_size < 1024 else f"{file_size/1024:.1f}MB"
             st.write(f"• {uploaded.name} ({size_str})")
-        if len(att_files) > 1:
-            st.caption("複数の勤怠CSVを選択すると自動で結合してから処理します。")
+        save_uploaded_files_to_cache("attendance", att_uploaded_files)
+        cached_attendance_files, cached_attendance_meta = load_cached_uploaded_files("attendance")
+
+    if cached_attendance_files:
+        st.caption("前回アップロードした勤怠CSVを自動で使用します。")
+        for meta in cached_attendance_meta:
+            file_size = (meta.get("size") or 0) / 1024
+            size_str = f"{file_size:.1f}KB" if file_size < 1024 else f"{file_size/1024:.1f}MB"
+            cols = st.columns([12, 1])
+            with cols[0]:
+                st.write(f"• {meta.get('name')} ({size_str})")
+            with cols[1]:
+                if st.button("×", key=f"remove_att_{meta.get('stored_name')}"):
+                    if remove_cached_file("attendance", meta.get("stored_name")):
+                        st.experimental_rerun()
+
+    att_files: List[Any] = list(cached_attendance_files)
+
+    if att_files and len(att_files) > 1:
+        st.caption("複数の勤怠CSVを選択すると自動で結合してから処理します。")
+
+    st.caption(f"※ アップロードしたCSVはローカルの `{UPLOAD_CACHE_DISPLAY}` に保存され、次回の入れ替えや削除ボタンを押すまで保持されます。")
     
     run = st.button("エラーチェック実行", type="primary", use_container_width=True)
     
@@ -1005,7 +1374,10 @@ with tab2:
                 col_filter1, col_filter2 = st.columns(2)
                 
                 with col_filter1:
-                    error_filter = st.selectbox("エラー", ["すべて", "エラーのみ", "正常のみ"], key="error_filter")
+                    error_options = ["すべて", "エラーのみ", "正常のみ"]
+                    st.session_state.setdefault("error_filter", "エラーのみ")
+                    default_error_index = error_options.index(st.session_state.error_filter) if st.session_state.error_filter in error_options else error_options.index("エラーのみ")
+                    error_filter = st.selectbox("エラー", error_options, index=default_error_index, key="error_filter")
                 
                 with col_filter2:
                     category_filter = st.selectbox("カテゴリ", ["すべて"] + [cat for cat in grid_df['カテゴリ'].unique() if pd.notna(cat) and cat != ''], key="category_filter")
@@ -1049,23 +1421,33 @@ with tab2:
                 with col_stat3:
                     st.metric("表示件数", filtered_records)
                 
-                # 条件付きスタイリングを適用したAgGridを表示
+                # 条件付きスタイリングを適用したAgGridまたはカードビューを表示
                 if not filtered_df.empty:
-                    gridOptions = create_styled_grid(filtered_df)
-                    
-                    # AgGridを表示
-                    grid_response = AgGrid(
-                        filtered_df,
-                        gridOptions=gridOptions,
-                        data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-                        update_mode=GridUpdateMode.SELECTION_CHANGED,
-                        fit_columns_on_grid_load=False,
-                        enable_enterprise_modules=False,
-                        height=600,
-                        width='100%',
-                        reload_data=False,
-                        allow_unsafe_jscode=True
+                    view_mode = st.radio(
+                        "表示モード",
+                        ("カード", "グリッド"),
+                        horizontal=True,
+                        key="view_mode_main"
                     )
+
+                    if view_mode == "グリッド":
+                        gridOptions = create_styled_grid(filtered_df)
+                        
+                        # AgGridを表示
+                        grid_response = AgGrid(
+                            filtered_df,
+                            gridOptions=gridOptions,
+                            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+                            update_mode=GridUpdateMode.SELECTION_CHANGED,
+                            fit_columns_on_grid_load=False,
+                            enable_enterprise_modules=False,
+                            height=600,
+                            width='100%',
+                            reload_data=False,
+                            allow_unsafe_jscode=True
+                        )
+                    else:
+                        show_card_view(filtered_df)
                 else:
                     st.info("フィルタ条件に一致するデータがありません")
                 

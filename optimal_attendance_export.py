@@ -396,6 +396,33 @@ def extract_month_string(date_value: Any) -> str:
         year, month = int(slash_parts.group(1)), int(slash_parts.group(2))
         return f"{year:04d}-{month:02d}"
     
+    # YYYY年MM月 のみが記載されたケース
+    jp_month = re.match(r'^(\d{4})年\s*(\d{1,2})月$', date_str)
+    if jp_month:
+        year, month = int(jp_month.group(1)), int(jp_month.group(2))
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
+    
+    # YYYYMM月 / YYYYMM といった圧縮表記
+    compact_month = re.match(r'^(\d{4})(\d{2})月?$', date_str)
+    if compact_month:
+        year, month = int(compact_month.group(1)), int(compact_month.group(2))
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
+    
+    # YYYY/MM や YYYY-MM の場合
+    compact_slash = re.match(r'^(\d{4})/(\d{1,2})$', date_str)
+    if compact_slash:
+        year, month = int(compact_slash.group(1)), int(compact_slash.group(2))
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
+    
+    compact_dash = re.match(r'^(\d{4})-(\d{1,2})$', date_str)
+    if compact_dash:
+        year, month = int(compact_dash.group(1)), int(compact_dash.group(2))
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
+    
     try:
         parsed = parse_date_any(date_str)
         return parsed.strftime("%Y-%m")
@@ -1478,18 +1505,21 @@ def show_optimal_attendance_export():
     try:
         attendance_df = None
         attendance_source: Optional[str] = None
+        uploaded_attendance = False
         
         if hasattr(st, 'session_state'):
             if st.session_state.get('attendance_df') is not None:
                 attendance_df = st.session_state.attendance_df.copy()
                 attendance_source = "アップロード済み勤怠CSV（セッション）"
+                uploaded_attendance = True
             else:
                 session_att_path = st.session_state.get('attendance_file_path')
                 if session_att_path and os.path.exists(session_att_path):
-                    attendance_source = session_att_path
                     for encoding in ['utf-8-sig', 'cp932', 'utf-8', 'shift_jis']:
                         try:
                             attendance_df = pd.read_csv(session_att_path, encoding=encoding)
+                            attendance_source = session_att_path
+                            uploaded_attendance = True
                             break
                         except UnicodeDecodeError:
                             continue
@@ -1519,6 +1549,7 @@ def show_optimal_attendance_export():
         source_label = attendance_source or "不明"
         st.success(f"勤怠データを読み込みました（ソース: {source_label}）。登録従業員: {len(total_employees)}名")
         
+        available_months: List[str] = []
         # 利用可能な年月を表示
         try:
             name_col = resolve_column(attendance_df, '名前', fallback_suffix='名前')
@@ -1526,18 +1557,63 @@ def show_optimal_attendance_export():
             if name_col and date_col:
                 normalized_dates = attendance_df[date_col].apply(extract_month_string)
                 month_counts = normalized_dates.value_counts().sort_index()
+                available_months = [month for month in month_counts.index if isinstance(month, str) and month]
                 if not month_counts.empty:
                     month_info = ', '.join([f"{month} ({count}件)" for month, count in month_counts.items()])
                     st.info(f"利用可能な年月: {month_info}")
         except Exception:
             pass
         
+        latest_available_month = max(available_months) if available_months else None
+        now = datetime.now()
+        if now.month == 1:
+            prev_year = now.year - 1
+            prev_month = 12
+        else:
+            prev_year = now.year
+            prev_month = now.month - 1
+        previous_month_str = f"{prev_year:04d}-{prev_month:02d}"
+
+        if uploaded_attendance and latest_available_month:
+            default_month_str = latest_available_month
+        elif uploaded_attendance:
+            default_month_str = f"{now.year:04d}-{now.month:02d}"
+        else:
+            default_month_str = previous_month_str
+
+        try:
+            default_year = int(default_month_str.split('-')[0])
+            default_month = int(default_month_str.split('-')[1])
+        except (ValueError, IndexError):
+            default_year = now.year
+            default_month = now.month
+            default_month_str = f"{default_year:04d}-{default_month:02d}"
+
+        year_candidates = {
+            default_year,
+            now.year,
+            now.year - 1,
+            now.year + 1,
+        }
+        year_candidates.update(
+            int(month.split('-')[0]) for month in available_months if isinstance(month, str) and '-' in month
+        )
+        year_options = sorted({year for year in year_candidates if year >= 1900})
+
+        month_options = list(range(1, 13))
+        default_month_index = month_options.index(default_month) if default_month in month_options else now.month - 1
+
         # 対象月の選択
         col1, col2 = st.columns(2)
         with col1:
-            target_year = st.selectbox("対象年", range(2023, 2026), index=2)
+            target_year = st.selectbox("対象年", year_options, index=year_options.index(default_year))
         with col2:
-            target_month = st.selectbox("対象月", range(1, 13), index=datetime.now().month - 1)
+            target_month = st.selectbox(
+                "対象月",
+                month_options,
+                index=default_month_index,
+                format_func=lambda m: f"{m:02d}月"
+            )
         
         target_month_str = f"{target_year}-{target_month:02d}"
         

@@ -217,14 +217,36 @@ def create_jinjer_headers() -> List[str]:
     return headers
 
 
-def dataframe_to_jinjer_csv_bytes(df: pd.DataFrame, encoding: str = 'shift_jis') -> bytes:
+def dataframe_to_jinjer_csv_bytes(
+    df: pd.DataFrame,
+    encoding: str = 'shift_jis',
+    column_order: Optional[List[str]] = None
+) -> bytes:
     """
     DataFrameをjinjer形式のヘッダー順に並べ替えてCSVバイト列に変換する。
     指定ヘッダーに含まれない列は削除し、欠損は空文字で埋める。
+    
+    Args:
+        df: CSVに変換するDataFrame。
+        encoding: 出力時に使用するエンコーディング。
+        column_order: 列順を固定したい場合に使用する列名リスト。
+                      未指定の場合はjinjer標準ヘッダー順を使用する。
     """
-    headers = create_jinjer_headers()
     normalized_df = df.copy()
+    # 出力対象外の列を除外
+    drop_targets = [col for col in EXCLUDED_OUTPUT_COLUMNS if col in normalized_df.columns]
+    if drop_targets:
+        normalized_df = normalized_df.drop(columns=drop_targets)
+    
+    headers = column_order or create_jinjer_headers()
+    headers = [col for col in headers if col not in EXCLUDED_OUTPUT_COLUMNS]
     normalized_df = normalized_df.reindex(columns=headers, fill_value='')
+    
+    # 指定の列は強制的にブランクにする
+    for col in FORCED_EMPTY_COLUMNS:
+        if col in normalized_df.columns:
+            normalized_df[col] = ''
+    
     normalized_df = normalized_df.fillna('')
     
     buffer = io.StringIO()
@@ -265,6 +287,31 @@ def format_time_for_csv(time_str: str) -> str:
 BREAK_COLUMN_PAIRS: List[Tuple[str, str]] = [(f"休憩{i}", f"復帰{i}") for i in range(1, 11)]
 FULL_WIDTH_DIGIT_MAP = str.maketrans("０１２３４５６７８９", "0123456789")
 COLUMN_REMOVE_CHARS = [' ', '　', '"', "'", '“', '”']
+EXCLUDED_OUTPUT_COLUMNS = frozenset()
+HOLIDAY_COLUMNS = [
+    '休日休暇名1', '休日休暇名1：種別', '休日休暇名1：開始時間', '休日休暇名1：終了時間', '休日休暇名1：理由',
+    '休日休暇名2', '休日休暇名2：種別', '休日休暇名2：開始時間', '休日休暇名2：終了時間', '休日休暇名2：理由'
+]
+FORCED_EMPTY_COLUMNS = tuple(
+    ['スケジュール雛形ID']
+    + HOLIDAY_COLUMNS
+    + [f'打刻区分ID:{i}' for i in range(1, 51)]
+    + [f'直行{i}' for i in range(1, 11)]
+    + [f'直帰{i}' for i in range(1, 11)]
+)
+FORCED_EMPTY_SET = set(FORCED_EMPTY_COLUMNS)
+
+
+def build_forced_empty_indices(headers: List[str]) -> List[int]:
+    """ヘッダーリストから強制ブランク対象列のインデックス一覧を取得"""
+    return [idx for idx, name in enumerate(headers) if name in FORCED_EMPTY_SET]
+
+
+def enforce_forced_empty_fields(row: List[Any], forced_indices: List[int]) -> None:
+    """指定インデックスの値を強制的にブランクへ更新"""
+    for idx in forced_indices:
+        if idx < len(row):
+            row[idx] = ''
 
 
 def normalize_column_name(name: Any) -> str:
@@ -1084,6 +1131,7 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
         'overtime_total': headers.index('総残業時間'),
         'overtime_external': headers.index('法定外残業時間'),
     }
+    forced_empty_indices = build_forced_empty_indices(headers)
     csv_content = ','.join(headers) + '\n'
     
     # サービス実績データを読み込み（優先順位順）
@@ -1196,14 +1244,18 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
                 if hasattr(st, 'session_state'):
                     st.warning(f"⚠️ {employee} {date}: シフトデータが見つかりません")
             
-            # 最大10シフトまで対応
-            for i, shift in enumerate(merged_shifts[:10]):
-                start_index = work_start_base + (i * 2)
+            # 出勤・退勤は24時間固定、以降は空欄
+            if work_start_base < len(headers):
+                row[work_start_base] = '0:00'
+            if work_start_base + 1 < len(headers):
+                row[work_start_base + 1] = '24:00'
+            for shift_idx in range(1, 10):
+                start_index = work_start_base + (shift_idx * 2)
                 end_index = start_index + 1
-                
-                if start_index < len(headers) and end_index < len(headers):
-                    row[start_index] = format_time_for_csv(shift['work_start'])
-                    row[end_index] = format_time_for_csv(shift['work_end'])
+                if start_index < len(headers):
+                    row[start_index] = ''
+                if end_index < len(headers):
+                    row[end_index] = ''
             
             # 管理情報の設定（勤務状況、遅刻取消処理等）- 空欄のまま
             # row[95-99]は既に''で初期化されているので何もしない
@@ -1211,35 +1263,26 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
             # 直行・直帰の設定 - 空欄のまま
             # row[100-119]は既に''で初期化されているので何もしない
             
-            # 打刻区分ID（全50列）にFALSEを設定
+            # 打刻区分ID（全50列）はブランクのままにする
             for i in range(stamp_count):
                 idx = stamp_start_index + i
                 if idx < len(headers):
-                    row[idx] = 'FALSE'
+                    row[idx] = ''
             
             # 勤務状況フラグ（未打刻、欠勤、休日打刻、休暇打刻、実績確定状況）を空欄に設定
             for idx in status_indices:
                 if idx < len(headers):
                     row[idx] = ''
             
-            # 労働時間の設定（サンプル値）
-            if len(merged_shifts) > 0:
-                total_minutes = sum(
-                    time_to_minutes(shift['work_end'], True) - time_to_minutes(shift['work_start'], False)
-                    for shift in merged_shifts
-                )
-                total_hours = total_minutes / 60
-                
-                row[labor_indices['total']] = f"{int(total_hours)}:{int((total_hours % 1) * 60):02d}"
-                row[labor_indices['actual']] = f"{int(total_hours - 1)}:{int(((total_hours - 1) % 1) * 60):02d}"
-                row[labor_indices['break']] = '1:00'
-                
-                if total_hours > 8:
-                    overtime = total_hours - 8
-                    row[labor_indices['overtime_total']] = f"{int(overtime)}:{int((overtime % 1) * 60):02d}"
-                    row[labor_indices['overtime_external']] = f"{int(overtime)}:{int((overtime % 1) * 60):02d}"
+            # 労働時間の設定（固定値）
+            row[labor_indices['total']] = '24:00'
+            row[labor_indices['actual']] = '23:00'
+            row[labor_indices['break']] = '1:00'
+            row[labor_indices['overtime_total']] = '16:00'
+            row[labor_indices['overtime_external']] = '16:00'
             
             # CSVの1行として追加
+            enforce_forced_empty_fields(row, forced_empty_indices)
             csv_content += ','.join([
                 f'"{field}"' if ',' in str(field) else str(field)
                 for field in row
@@ -1266,6 +1309,7 @@ def generate_0_24_jinjer_csv(selected_employees: List[str], target_month: str, a
         'overtime_total': headers.index('総残業時間'),
         'overtime_external': headers.index('法定外残業時間'),
     }
+    forced_empty_indices = build_forced_empty_indices(headers)
     csv_content = ','.join(headers) + '\n'
     
     # 対象月の全日付を生成
@@ -1302,12 +1346,19 @@ def generate_0_24_jinjer_csv(selected_employees: List[str], target_month: str, a
                 row[work_start_base] = '0:00'
             if work_start_base + 1 < len(headers):
                 row[work_start_base + 1] = '24:00'
+            for shift_idx in range(1, 10):
+                start_index = work_start_base + (shift_idx * 2)
+                end_index = start_index + 1
+                if start_index < len(headers):
+                    row[start_index] = ''
+                if end_index < len(headers):
+                    row[end_index] = ''
             
-            # 打刻区分ID（全50列）にFALSEを設定
+            # 打刻区分ID（全50列）はブランクのままにする
             for i in range(stamp_count):
                 idx = stamp_start_index + i
                 if idx < len(headers):
-                    row[idx] = 'FALSE'
+                    row[idx] = ''
             
             # 勤務状況フラグを空欄に設定
             for idx in status_indices:
@@ -1322,6 +1373,93 @@ def generate_0_24_jinjer_csv(selected_employees: List[str], target_month: str, a
             row[labor_indices['overtime_external']] = '16:00'
             
             # CSVの1行として追加
+            enforce_forced_empty_fields(row, forced_empty_indices)
+            csv_content += ','.join([
+                f'"{field}"' if ',' in str(field) else str(field)
+                for field in row
+            ]) + '\n'
+    
+    return csv_content
+
+
+def generate_delete_attendance_csv(
+    selected_employees: List[str],
+    target_month: str,
+    attendance_data: pd.DataFrame
+) -> str:
+    """元データに存在する出勤・退勤カラムのみ'Null'でクリアするCSVを生成"""
+    headers = create_jinjer_headers()
+    work_start_base = headers.index('出勤1')
+    forced_empty_indices = build_forced_empty_indices(headers)
+    csv_content = ','.join(headers) + '\n'
+    
+    year, month = map(int, target_month.split('-'))
+    days_in_month = calendar.monthrange(year, month)[1]
+    all_dates = [f"{year:04d}-{month:02d}-{day:02d}" for day in range(1, days_in_month + 1)]
+    
+    for employee in selected_employees:
+        employee_data = attendance_data[
+            attendance_data['名前'].str.strip() == employee.strip()
+        ].copy()
+        name_col = resolve_column(employee_data, '名前', fallback_suffix='名前')
+        date_col = resolve_column(employee_data, '*年月日', fallback_suffix='年月日')
+        start_cols = []
+        end_cols = []
+        for i in range(1, 11):
+            start_cols.append(resolve_column(employee_data, f'出勤{i}', fallback_suffix=f'出勤{i}') or f'出勤{i}')
+            end_cols.append(resolve_column(employee_data, f'退勤{i}', fallback_suffix=f'退勤{i}') or f'退勤{i}')
+        
+        employee_id = ''
+        if not employee_data.empty:
+            employee_id = str(employee_data.iloc[0].get('*従業員ID', '')).strip()
+        if not employee_id or employee_id == 'nan':
+            employee_id = get_employee_id(employee)
+        
+        for date in all_dates:
+            row = [''] * len(headers)
+            row[0] = employee
+            row[1] = employee_id
+            row[2] = date
+            row[3] = '1'
+            row[4] = '株式会社hot'
+            
+            source_row = None
+            if not employee_data.empty and name_col and date_col:
+                date_mask = employee_data[date_col].astype(str) == date
+                if date_mask.any():
+                    source_row = employee_data[date_mask].iloc[0]
+            
+            # 元データに値が入っていた出勤・退勤カラムのみNullにする
+            for shift_idx in range(0, 10):
+                start_index = work_start_base + (shift_idx * 2)
+                end_index = start_index + 1
+                start_has_value = False
+                end_has_value = False
+                
+                if source_row is not None:
+                    start_src_col = start_cols[shift_idx]
+                    end_src_col = end_cols[shift_idx]
+                    
+                    if start_src_col in source_row.index:
+                        start_val = source_row[start_src_col]
+                        if isinstance(start_val, str):
+                            start_has_value = start_val.strip() != ''
+                        else:
+                            start_has_value = pd.notna(start_val)
+                    if end_src_col in source_row.index:
+                        end_val = source_row[end_src_col]
+                        if isinstance(end_val, str):
+                            end_has_value = end_val.strip() != ''
+                        else:
+                            end_has_value = pd.notna(end_val)
+                
+                if start_index < len(headers):
+                    row[start_index] = 'Null' if start_has_value or end_has_value else ''
+                if end_index < len(headers):
+                    row[end_index] = 'Null' if start_has_value or end_has_value else ''
+            
+            # 労働時間系は空欄にする
+            enforce_forced_empty_fields(row, forced_empty_indices)
             csv_content += ','.join([
                 f'"{field}"' if ',' in str(field) else str(field)
                 for field in row
@@ -1505,7 +1643,10 @@ def show_optimal_attendance_export():
             with st.spinner("休憩時間を補正しています..."):
                 try:
                     adjusted_df, rounded_rows, rounded_slots = auto_round_break_times(month_attendance_df)
-                    csv_bytes = dataframe_to_jinjer_csv_bytes(adjusted_df)
+                    csv_bytes = dataframe_to_jinjer_csv_bytes(
+                        adjusted_df,
+                        column_order=list(month_attendance_df.columns)
+                    )
                     
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     filename = f"最適休憩時間_{target_month_str}_{timestamp}.csv"
@@ -1610,7 +1751,10 @@ def show_optimal_attendance_export():
                             
                             if download_df.empty:
                                 st.warning("指定された従業員に該当するデータがありませんでした。空のCSVを出力します。")
-                            csv_bytes = dataframe_to_jinjer_csv_bytes(download_df)
+                            csv_bytes = dataframe_to_jinjer_csv_bytes(
+                                download_df,
+                                column_order=list(month_attendance_df.columns)
+                            )
                             
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             filename = f"休憩時間一括変更_{target_month_str}_{timestamp}.csv"
@@ -1679,6 +1823,75 @@ def show_optimal_attendance_export():
                         st.info(f"📊 出力詳細: {lines}行のデータ（ヘッダー含む{lines + 1}行）")
                     except Exception as e:
                         st.error(f"24時間データCSV生成中にエラーが発生しました: {str(e)}")
+        
+        # 一括削除CSVセクション
+        st.write("")
+        st.markdown("#### 🗑️ 一括削除CSV")
+        st.caption("選択した従業員・対象月の出勤/退勤カラムをすべて Null で出力します。操作前に必ず確認してください。")
+        
+        if 'delete_confirm_emps' not in st.session_state:
+            st.session_state.delete_confirm_emps = []
+        if 'delete_csv_bytes' not in st.session_state:
+            st.session_state.delete_csv_bytes = None
+        if 'delete_csv_filename' not in st.session_state:
+            st.session_state.delete_csv_filename = ''
+        
+        # 選択外の従業員が含まれている場合はリセット
+        if st.session_state.delete_confirm_emps:
+            current_set = set(st.session_state.selected_employees_export)
+            if not current_set.issuperset(st.session_state.delete_confirm_emps):
+                st.session_state.delete_confirm_emps = []
+                st.session_state.delete_csv_bytes = None
+                st.session_state.delete_csv_filename = ''
+        
+        if st.button("🗑️ 一括削除CSVの確認に進む", key="prepare_delete_csv"):
+            if not st.session_state.selected_employees_export:
+                st.error("先に従業員を選択してください。")
+            else:
+                st.session_state.delete_confirm_emps = list(st.session_state.selected_employees_export)
+                st.session_state.delete_csv_bytes = None
+                st.session_state.delete_csv_filename = ''
+        
+        if st.session_state.delete_confirm_emps:
+            st.warning("下記の従業員で出勤/退勤を Null にします。必ず確認してください。")
+            for emp in st.session_state.delete_confirm_emps:
+                st.write(f"- {emp}")
+            
+            col_confirm, col_cancel = st.columns([1, 1])
+            with col_confirm:
+                if st.button("✅ 上記の従業員でCSV生成", key="confirm_delete_csv"):
+                    try:
+                        csv_content = generate_delete_attendance_csv(
+                            st.session_state.delete_confirm_emps,
+                            target_month_str,
+                            month_attendance_df
+                        )
+                        st.session_state.delete_csv_bytes = csv_content.encode('shift_jis', errors='ignore')
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        st.session_state.delete_csv_filename = f"勤怠一括削除_{target_month_str}_{timestamp}.csv"
+                        st.success("✅ CSVを生成しました。ダウンロードボタンから保存できます。")
+                    except Exception as e:
+                        st.error(f"一括削除CSV生成中にエラーが発生しました: {str(e)}")
+            with col_cancel:
+                if st.button("キャンセル", key="cancel_delete_csv"):
+                    st.session_state.delete_confirm_emps = []
+                    st.session_state.delete_csv_bytes = None
+                    st.session_state.delete_csv_filename = ''
+                    st.info("一括削除の操作をキャンセルしました。")
+            
+            if st.session_state.delete_csv_bytes:
+                st.download_button(
+                    label="📥 一括削除CSVをダウンロード",
+                    data=st.session_state.delete_csv_bytes,
+                    file_name=st.session_state.delete_csv_filename or "勤怠一括削除.csv",
+                    mime="text/csv",
+                    key="download_delete_csv"
+                )
+        
+        elif st.session_state.delete_csv_bytes:
+            # 状態がリセットされた場合の安全対策
+            st.session_state.delete_csv_bytes = None
+            st.session_state.delete_csv_filename = ''
             
     except FileNotFoundError:
         st.error("勤怠履歴.csvファイルが見つかりません。inputフォルダに配置してください。")

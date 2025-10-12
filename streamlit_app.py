@@ -389,11 +389,12 @@ def write_upload_manifest(data: Dict[str, List[Dict[str, Any]]]) -> None:
 class CachedUploadedFile:
     """st.file_uploaderで選択したファイルをローカルキャッシュから再生成するためのラッパー"""
 
-    def __init__(self, name: str, stored_path: Path, size: Optional[int] = None, saved_at: Optional[str] = None):
+    def __init__(self, name: str, stored_path: Path, size: Optional[int] = None, saved_at: Optional[str] = None, stored_name: Optional[str] = None):
         self.name = name
         self._stored_path = stored_path
         self._size = size
         self.saved_at = saved_at
+        self.stored_name = stored_name or stored_path.name
         self._data: Optional[bytes] = None
 
     def _load(self) -> bytes:
@@ -490,7 +491,8 @@ def load_cached_uploaded_files(category: str) -> Tuple[List[CachedUploadedFile],
             name=entry.get("name", stored_name),
             stored_path=stored_path,
             size=entry.get("size"),
-            saved_at=entry.get("saved_at")
+            saved_at=entry.get("saved_at"),
+            stored_name=stored_name
         )
         loaded_files.append(cached_file)
         valid_entries.append(entry)
@@ -527,6 +529,29 @@ def remove_cached_file(category: str, stored_name: str) -> bool:
         manifest[category] = remaining_entries
         write_upload_manifest(manifest)
     return removed
+
+
+def trigger_streamlit_rerun() -> None:
+    """Streamlitのバージョン差異を吸収しながら安全にrerunを要求する。"""
+    rerun_fn = getattr(st, "rerun", None)
+    if callable(rerun_fn):
+        rerun_fn()
+        return
+
+    rerun_fn = getattr(st, "experimental_rerun", None)
+    if callable(rerun_fn):
+        rerun_fn()
+        return
+
+    set_params = getattr(st, "experimental_set_query_params", None)
+    get_params = getattr(st, "experimental_get_query_params", None)
+    if callable(set_params) and callable(get_params):
+        params = get_params()
+        params["_refresh_token"] = [uuid.uuid4().hex]
+        set_params(**params)
+        return
+
+    st.warning("ファイル一覧を更新するにはブラウザを再読み込みしてください。")
 
 
 def collect_summary(result_paths):
@@ -1053,7 +1078,7 @@ with tab1:
 
     if cached_service_files:
         st.caption("前回アップロードしたサービスCSVを自動で使用します。")
-        for meta in cached_service_meta:
+        for meta in list(cached_service_meta):
             file_size = (meta.get("size") or 0) / 1024
             size_str = f"{file_size:.1f}KB" if file_size < 1024 else f"{file_size/1024:.1f}MB"
             cols = st.columns([12, 1])
@@ -1063,7 +1088,10 @@ with tab1:
                 button_label = "×"
                 if st.button(button_label, key=f"remove_service_{meta.get('stored_name')}"):
                     if remove_cached_file("service", meta.get("stored_name")):
-                        st.experimental_rerun()
+                        cached_service_meta = [m for m in cached_service_meta if m.get("stored_name") != meta.get("stored_name")]
+                        cached_service_files = [obj for obj in cached_service_files if getattr(obj, "stored_name", None) != meta.get("stored_name")]
+                        st.success(f"{meta.get('name')} を削除しました。")
+                        trigger_streamlit_rerun()
 
     svc_files: List[Any] = list(cached_service_files)
     
@@ -1083,7 +1111,7 @@ with tab1:
 
     if cached_attendance_files:
         st.caption("前回アップロードした勤怠CSVを自動で使用します。")
-        for meta in cached_attendance_meta:
+        for meta in list(cached_attendance_meta):
             file_size = (meta.get("size") or 0) / 1024
             size_str = f"{file_size:.1f}KB" if file_size < 1024 else f"{file_size/1024:.1f}MB"
             cols = st.columns([12, 1])
@@ -1092,7 +1120,10 @@ with tab1:
             with cols[1]:
                 if st.button("×", key=f"remove_att_{meta.get('stored_name')}"):
                     if remove_cached_file("attendance", meta.get("stored_name")):
-                        st.experimental_rerun()
+                        cached_attendance_meta = [m for m in cached_attendance_meta if m.get("stored_name") != meta.get("stored_name")]
+                        cached_attendance_files = [obj for obj in cached_attendance_files if getattr(obj, "stored_name", None) != meta.get("stored_name")]
+                        st.success(f"{meta.get('name')} を削除しました。")
+                        trigger_streamlit_rerun()
 
     att_files: List[Any] = list(cached_attendance_files)
 

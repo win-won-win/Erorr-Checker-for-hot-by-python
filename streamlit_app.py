@@ -355,23 +355,29 @@ if _upload_cache_display_raw.startswith(_home_prefix):
 else:
     UPLOAD_CACHE_DISPLAY = _upload_cache_display_raw
 
+# 旧ファイル復元機能はデフォルト無効。環境変数で `STREAMLIT_USE_UPLOAD_CACHE=1` を指定すると復活する。
+ENABLE_UPLOAD_CACHE = os.environ.get("STREAMLIT_USE_UPLOAD_CACHE", "0") == "1"
 
 def _default_upload_manifest() -> Dict[str, List[Dict[str, Any]]]:
     return {"service": [], "attendance": []}
 
 
 def ensure_upload_cache_dir() -> None:
+    if not ENABLE_UPLOAD_CACHE:
+        return
     UPLOAD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def read_upload_manifest() -> Dict[str, List[Dict[str, Any]]]:
+    if not ENABLE_UPLOAD_CACHE:
+        return _default_upload_manifest()
     ensure_upload_cache_dir()
     if not UPLOAD_CACHE_MANIFEST.exists():
         write_upload_manifest(_default_upload_manifest())
     try:
         with open(UPLOAD_CACHE_MANIFEST, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
+    except (json.JSONDecodeError, FileNotFoundError, UnicodeDecodeError):
         data = _default_upload_manifest()
         write_upload_manifest(data)
     for key in ["service", "attendance"]:
@@ -381,6 +387,8 @@ def read_upload_manifest() -> Dict[str, List[Dict[str, Any]]]:
 
 
 def write_upload_manifest(data: Dict[str, List[Dict[str, Any]]]) -> None:
+    if not ENABLE_UPLOAD_CACHE:
+        return
     ensure_upload_cache_dir()
     with open(UPLOAD_CACHE_MANIFEST, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -426,7 +434,7 @@ class CachedUploadedFile:
 
 
 def save_uploaded_files_to_cache(category: str, uploaded_files: List[Any]) -> None:
-    if not uploaded_files:
+    if not ENABLE_UPLOAD_CACHE or not uploaded_files:
         return
 
     manifest = read_upload_manifest()
@@ -475,6 +483,8 @@ def save_uploaded_files_to_cache(category: str, uploaded_files: List[Any]) -> No
 
 
 def load_cached_uploaded_files(category: str) -> Tuple[List[CachedUploadedFile], List[Dict[str, Any]]]:
+    if not ENABLE_UPLOAD_CACHE:
+        return [], []
     manifest = read_upload_manifest()
     entries = manifest.get(category, [])
     loaded_files: List[CachedUploadedFile] = []
@@ -505,6 +515,8 @@ def load_cached_uploaded_files(category: str) -> Tuple[List[CachedUploadedFile],
 
 
 def remove_cached_file(category: str, stored_name: str) -> bool:
+    if not ENABLE_UPLOAD_CACHE:
+        return False
     manifest = read_upload_manifest()
     entries = manifest.get(category, [])
     if not entries:
@@ -1093,7 +1105,10 @@ with tab1:
                         st.success(f"{meta.get('name')} を削除しました。")
                         trigger_streamlit_rerun()
 
-    svc_files: List[Any] = list(cached_service_files)
+    if ENABLE_UPLOAD_CACHE:
+        svc_files: List[Any] = list(cached_service_files)
+    else:
+        svc_files = list(svc_uploaded_files)
     
     st.subheader("勤怠履歴CSV")
     st.info("CSVファイルをここにドラッグ&ドロップするか、下のボタンからファイルを選択してください")
@@ -1125,12 +1140,18 @@ with tab1:
                         st.success(f"{meta.get('name')} を削除しました。")
                         trigger_streamlit_rerun()
 
-    att_files: List[Any] = list(cached_attendance_files)
+    if ENABLE_UPLOAD_CACHE:
+        att_files: List[Any] = list(cached_attendance_files)
+    else:
+        att_files = list(att_uploaded_files)
 
     if att_files and len(att_files) > 1:
         st.caption("複数の勤怠CSVを選択すると自動で結合してから処理します。")
 
-    st.caption(f"※ アップロードしたCSVはローカルの `{UPLOAD_CACHE_DISPLAY}` に保存され、次回の入れ替えや削除ボタンを押すまで保持されます。")
+    if ENABLE_UPLOAD_CACHE:
+        st.caption(f"※ アップロードしたCSVはローカルの `{UPLOAD_CACHE_DISPLAY}` に保存され、次回の入れ替えや削除ボタンを押すまで保持されます。")
+    else:
+        st.caption("※ アップロードしたCSVは今回のセッション中のみ保持され、このページをリロードするとクリアされます。")
     
     run = st.button("エラーチェック実行", type="primary", use_container_width=True)
     

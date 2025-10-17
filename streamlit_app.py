@@ -1427,8 +1427,10 @@ with tab2:
                 
                 with col_filter1:
                     error_options = ["すべて", "エラーのみ", "正常のみ"]
-                    st.session_state.setdefault("error_filter", "エラーのみ")
-                    default_error_index = error_options.index(st.session_state.error_filter) if st.session_state.error_filter in error_options else error_options.index("エラーのみ")
+                    if "error_filter" in st.session_state and st.session_state.error_filter in error_options:
+                        default_error_index = error_options.index(st.session_state.error_filter)
+                    else:
+                        default_error_index = error_options.index("エラーのみ")
                     error_filter = st.selectbox("エラー", error_options, index=default_error_index, key="error_filter")
                 
                 with col_filter2:

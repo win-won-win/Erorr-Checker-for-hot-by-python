@@ -1032,6 +1032,35 @@ st.markdown("""
     font-size: 0.8em;
 }
 
+/* 外部事業所エラーチェックボタン */
+.external-check-button {
+    display: inline-flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    margin: 0.75rem 0 1.25rem 0;
+    padding: 0.65rem 1rem;
+    border-radius: 0.75rem;
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    color: #ffffff !important;
+    font-weight: 600;
+    text-decoration: none;
+    box-shadow: 0 5px 14px rgba(34, 197, 94, 0.35);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+}
+
+.external-check-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 7px 18px rgba(34, 197, 94, 0.45);
+    filter: brightness(1.05);
+}
+
+.external-check-button:active {
+    transform: translateY(1px);
+    box-shadow: 0 3px 9px rgba(34, 197, 94, 0.4);
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1051,6 +1080,10 @@ if 'workdir' not in st.session_state:
 
 # サイドバーのオプション設定
 with st.sidebar:
+    st.markdown(
+        '<a class="external-check-button" href="https://service-overlap-chec-1g0c.bolt.host" target="_self">外部事業所エラーチェック</a>',
+        unsafe_allow_html=True
+    )
     st.header("設定")
     identical_prefer = st.selectbox("完全一致時", ["earlier", "later"], index=0)
     alt_delim = st.text_input("区切り文字", value="/")

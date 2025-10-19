@@ -779,7 +779,8 @@ def prepare_grid_data(result_paths):
                 '勤務時間詳細': row.get('勤務時間詳細', ''),
                 '勤務時間外詳細': row.get('勤務時間外詳細', ''),
                 '未カバー区間': row.get('未カバー区間', ''),
-                '勤務区間数': row.get('勤務区間数', 0)
+                '勤務区間数': row.get('勤務区間数', 0),
+                '元データ事業所名': facility_name or ''
             }
             grid_data.append(grid_row)
     
@@ -805,8 +806,8 @@ def prepare_grid_data(result_paths):
 def create_styled_grid(df):
     """
     条件付き背景色を適用したAgGridを作成する関数
-    - 「さくら」を含む行：薄い赤の背景色 (#ffebee)
-    - 「ほっと」を含む行：薄い青の背景色 (#e3f2fd)
+    - 元データ事業所名が「さくら」を含む行：薄い赤の背景色 (#ffebee)
+    - 元データ事業所名が「ほっと」を含む行：薄い青の背景色 (#e3f2fd)
     """
     # GridOptionsBuilderを使用してグリッドオプションを設定
     gb = GridOptionsBuilder.from_dataframe(df)
@@ -829,17 +830,14 @@ def create_styled_grid(df):
     # 条件付きスタイリングのJavaScriptコード
     cell_style_jscode = JsCode("""
     function(params) {
-        const facilityName = params.data['重複エラー事業所名'];
+        const facilityName = params.data['元データ事業所名'];
         if (facilityName) {
-            // 正確に「さくら」または「ほっと」に一致する場合のみ色を適用
             if (facilityName === 'さくら' || facilityName.includes('さくら')) {
-                // 「さくら」の場合：薄い赤
                 return {
                     'backgroundColor': '#ffebee',
                     'color': 'black'
                 };
             } else if (facilityName === 'ほっと' || facilityName.includes('ほっと')) {
-                // 「ほっと」の場合：薄い青
                 return {
                     'backgroundColor': '#e3f2fd',
                     'color': 'black'
@@ -853,14 +851,11 @@ def create_styled_grid(df):
     # 行全体にスタイルを適用
     row_style_jscode = JsCode("""
     function(params) {
-        const facilityName = params.data['重複エラー事業所名'];
+        const facilityName = params.data['元データ事業所名'];
         if (facilityName) {
-            // 正確に「さくら」または「ほっと」に一致する場合のみ色を適用
             if (facilityName === 'さくら' || facilityName.includes('さくら')) {
-                // 「さくら」の場合：薄い赤
                 return {'backgroundColor': '#ffebee'};
             } else if (facilityName === 'ほっと' || facilityName.includes('ほっと')) {
-                // 「ほっと」の場合：薄い青
                 return {'backgroundColor': '#e3f2fd'};
             }
         }
@@ -881,6 +876,8 @@ def create_styled_grid(df):
     # その他の重要な列の幅も調整
     if '重複エラー事業所名' in df.columns:
         gb.configure_column('重複エラー事業所名', width=150)
+    if '元データ事業所名' in df.columns:
+        gb.configure_column('元データ事業所名', hide=True)
     if '利用者名' in df.columns:
         gb.configure_column('利用者名', width=120)
     
@@ -924,6 +921,7 @@ def show_card_view(df: pd.DataFrame) -> None:
         user_name = _safe_text(row.get("利用者名")) or "利用者不明"
         staff_name = _safe_text(row.get("担当所員")) or "担当未設定"
         facility_name = _safe_text(row.get("重複エラー事業所名")) or "事業所未設定"
+        source_facility = _safe_text(row.get("元データ事業所名"))
         alt_staff = _safe_text(row.get("代替従業員リスト")) or "ー"
 
         duplicate_user = _safe_text(row.get("重複利用者名"))
@@ -964,10 +962,10 @@ def show_card_view(df: pd.DataFrame) -> None:
 
         indicator_color: Optional[Tuple[int, int, int]] = None
         indicator_fallback = None
-        if facility_name and "さくら" in facility_name:
+        if source_facility and "さくら" in source_facility:
             indicator_color = (255, 224, 236)  # 薄いピンク
             indicator_fallback = ":red[┃]"
-        elif facility_name and "ほっと" in facility_name:
+        elif source_facility and "ほっと" in source_facility:
             indicator_color = (224, 238, 255)  # 薄い青
             indicator_fallback = ":blue[┃]"
 
@@ -1423,7 +1421,7 @@ with tab2:
             grid_df = prepare_grid_data(st.session_state.result_paths)
             
             if not grid_df.empty:
-                col_filter1, col_filter2 = st.columns(2)
+                col_filter1, col_filter2, col_filter3 = st.columns(3)
                 
                 with col_filter1:
                     error_options = ["すべて", "エラーのみ", "正常のみ"]
@@ -1435,6 +1433,22 @@ with tab2:
                 
                 with col_filter2:
                     category_filter = st.selectbox("カテゴリ", ["すべて"] + [cat for cat in grid_df['カテゴリ'].unique() if pd.notna(cat) and cat != ''], key="category_filter")
+                
+                with col_filter3:
+                    available_facilities = [
+                        fac for fac in grid_df['元データ事業所名'].dropna().unique()
+                        if isinstance(fac, str) and fac.strip() != ''
+                    ]
+                    facility_options = ["すべて"] + sorted(available_facilities)
+                    previous_facility = st.session_state.get("facility_filter", "すべて")
+                    if previous_facility not in facility_options:
+                        previous_facility = "すべて"
+                    facility_filter = st.selectbox(
+                        "元データ事業所",
+                        facility_options,
+                        index=facility_options.index(previous_facility),
+                        key="facility_filter"
+                    )
                 
                 col_staff, col_user = st.columns(2)
                 
@@ -1462,6 +1476,9 @@ with tab2:
                 
                 if selected_users:
                     filtered_df = filtered_df[filtered_df['利用者名'].isin(selected_users)]
+                
+                if facility_filter != "すべて":
+                    filtered_df = filtered_df[filtered_df['元データ事業所名'] == facility_filter]
                 
                 total_records = len(grid_df)
                 error_records = len(grid_df[grid_df['エラー'] == '◯'])

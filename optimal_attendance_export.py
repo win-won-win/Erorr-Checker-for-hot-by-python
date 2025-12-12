@@ -19,6 +19,7 @@ import glob
 from pathlib import Path
 import base64
 import gzip
+import logging
 
 
 def find_default_attendance_csv() -> Optional[Path]:
@@ -276,6 +277,10 @@ def minutes_to_time(minutes: int) -> str:
     hours = minutes // 60
     mins = minutes % 60
     return f"{hours}:{mins:02d}"
+
+def debug_log(message: str) -> None:
+    """デバッグ出力を抑止"""
+    return
 
 def format_time_for_csv(time_str: str) -> str:
     """CSV出力用の時間フォーマット"""
@@ -796,9 +801,9 @@ def load_service_data_from_session() -> pd.DataFrame:
                         if not iso_date:
                             iso_date = date  # 変換できない場合は元の日付を使用
                         
-                        # デバッグ情報: 日付変換
-                        if hasattr(st, 'session_state') and date != iso_date:
-                            st.write(f"    📅 日付変換: '{date}' -> '{iso_date}'")
+                        # デバッグ情報: 日付変換（コンソール出力）
+                        if date != iso_date:
+                            debug_log(f"    📅 日付変換: '{date}' -> '{iso_date}'")
                         
                         service_data.append({
                             'employee': employee,  # 元の名前
@@ -814,24 +819,20 @@ def load_service_data_from_session() -> pd.DataFrame:
     # 統合されたDataFrameを返す
     result_df = pd.DataFrame(service_data)
     
-    # デバッグ情報（常に表示）
-    if hasattr(st, 'session_state'):
-        st.info(f"🔍 セッション状態確認:")
-        st.write(f"  - service_data_list存在: {'service_data_list' in st.session_state}")
-        if 'service_data_list' in st.session_state:
-            st.write(f"  - service_data_listの長さ: {len(st.session_state.service_data_list) if st.session_state.service_data_list else 0}")
-        
-        st.info(f"🔍 統合されたサービス実績データ: {len(result_df)}行")
-        if not result_df.empty:
-            unique_employees = result_df['employee'].nunique()
-            unique_dates = result_df['date'].nunique()
-            st.write(f"  従業員数: {unique_employees}, 日付数: {unique_dates}")
-            
-            # サンプルデータを表示
-            st.write("サンプルデータ（最初の5行）:")
-            st.dataframe(result_df.head())
-        else:
-            st.warning("⚠️ サービス実績データが空です")
+    # デバッグ情報（コンソールのみに出力）
+    debug_log("🔍 セッション状態確認:")
+    debug_log(f"  - service_data_list存在: {'service_data_list' in st.session_state}")
+    if 'service_data_list' in st.session_state:
+        debug_log(f"  - service_data_listの長さ: {len(st.session_state.service_data_list) if st.session_state.service_data_list else 0}")
+    
+    debug_log(f"🔍 統合されたサービス実績データ: {len(result_df)}行")
+    if not result_df.empty:
+        unique_employees = result_df['employee'].nunique()
+        unique_dates = result_df['date'].nunique()
+        debug_log(f"  従業員数: {unique_employees}, 日付数: {unique_dates}")
+        debug_log(f"  サンプルデータ（最初の5行）: {result_df.head().to_dict(orient='records')}")
+    else:
+        debug_log("⚠️ サービス実績データが空です")
     
     return result_df
 
@@ -853,10 +854,9 @@ def load_service_data_from_input_dir(workdir: str = None) -> pd.DataFrame:
     service_files = [f for f in csv_files if '勤怠' not in f and 'attendance' not in f.lower()]
     
     # デバッグ情報
-    if hasattr(st, 'session_state'):
-        st.info(f"🔍 inputディレクトリ: {input_dir}")
-        st.write(f"  全CSVファイル: {csv_files}")
-        st.write(f"  サービス実績ファイル: {service_files}")
+    debug_log(f"🔍 inputディレクトリ: {input_dir}")
+    debug_log(f"  全CSVファイル: {csv_files}")
+    debug_log(f"  サービス実績ファイル: {service_files}")
     
     for service_file in service_files:
         file_path = os.path.join(input_dir, service_file)
@@ -874,9 +874,8 @@ def load_service_data_from_input_dir(workdir: str = None) -> pd.DataFrame:
                 continue
             
             # デバッグ情報
-            if hasattr(st, 'session_state'):
-                st.success(f"✅ {service_file}を読み込み: {len(df)}行")
-                st.write(f"  カラム: {df.columns.tolist()}")
+            debug_log(f"✅ {service_file}を読み込み: {len(df)}行")
+            debug_log(f"  カラム: {df.columns.tolist()}")
             
             # サービス実績データを抽出
             for _, row in df.iterrows():
@@ -931,22 +930,17 @@ def load_service_data_from_input_dir(workdir: str = None) -> pd.DataFrame:
                     })
         
         except Exception as e:
-            if hasattr(st, 'session_state'):
-                st.error(f"❌ {service_file}の読み込みエラー: {str(e)}")
+            debug_log(f"❌ {service_file}の読み込みエラー: {str(e)}")
     
     result_df = pd.DataFrame(service_data)
     
     # デバッグ情報
-    if hasattr(st, 'session_state'):
-        st.info(f"🔍 inputディレクトリから統合されたサービス実績データ: {len(result_df)}行")
-        if not result_df.empty:
-            unique_employees = result_df['employee'].nunique()
-            unique_dates = result_df['date'].nunique()
-            st.write(f"  従業員数: {unique_employees}, 日付数: {unique_dates}")
-            
-            # サンプルデータを表示
-            st.write("サンプルデータ（最初の5行）:")
-            st.dataframe(result_df.head())
+    debug_log(f"🔍 inputディレクトリから統合されたサービス実績データ: {len(result_df)}行")
+    if not result_df.empty:
+        unique_employees = result_df['employee'].nunique()
+        unique_dates = result_df['date'].nunique()
+        debug_log(f"  従業員数: {unique_employees}, 日付数: {unique_dates}")
+        debug_log(f"  サンプルデータ（最初の5行）: {result_df.head().to_dict(orient='records')}")
     
     return result_df
 
@@ -1031,35 +1025,29 @@ def aggregate_daily_service_times(service_df: pd.DataFrame, employee: str, targe
             target_date_data = service_df[service_df['date'] == target_date]
             
             # デバッグ情報: パターン3開始
-            if hasattr(st, 'session_state'):
-                st.write(f"    🔄 パターン3開始: 対象日のデータ数={len(target_date_data)}")
+            debug_log(f"    🔄 パターン3開始: 対象日のデータ数={len(target_date_data)}")
             
             for _, row in target_date_data.iterrows():
                 service_employee = str(row['employee']).strip()
                 service_normalized = normalize_name(service_employee)
                 
                 # デバッグ情報: 各行の照合状況
-                if hasattr(st, 'session_state'):
-                    st.write(f"    照合中: '{service_employee}' -> 正規化: '{service_normalized}'")
+                debug_log(f"    照合中: '{service_employee}' -> 正規化: '{service_normalized}'")
                 
                 # 4つのパターンで照合
                 match_found = False
                 if service_employee == employee:
                     match_found = True
-                    if hasattr(st, 'session_state'):
-                        st.write(f"      ✅ パターン1マッチ: 元の名前同士")
+                    debug_log("      ✅ パターン1マッチ: 元の名前同士")
                 elif service_normalized == normalized_employee:
                     match_found = True
-                    if hasattr(st, 'session_state'):
-                        st.write(f"      ✅ パターン2マッチ: 正規化した名前同士")
+                    debug_log("      ✅ パターン2マッチ: 正規化した名前同士")
                 elif service_normalized == employee:
                     match_found = True
-                    if hasattr(st, 'session_state'):
-                        st.write(f"      ✅ パターン3マッチ: 正規化 vs 元")
+                    debug_log("      ✅ パターン3マッチ: 正規化 vs 元")
                 elif service_employee == normalized_employee:
                     match_found = True
-                    if hasattr(st, 'session_state'):
-                        st.write(f"      ✅ パターン4マッチ: 元 vs 正規化")
+                    debug_log("      ✅ パターン4マッチ: 元 vs 正規化")
                 
                 if match_found:
                     matching_rows.append(row)
@@ -1068,20 +1056,19 @@ def aggregate_daily_service_times(service_df: pd.DataFrame, employee: str, targe
                 daily_services = pd.DataFrame(matching_rows)
         
         # デバッグ情報
-        if hasattr(st, 'session_state'):
-            st.write(f"  🔍 従業員名照合: '{employee}' -> 正規化: '{normalized_employee}'")
-            if not daily_services.empty:
-                st.write(f"    ✅ マッチしたサービス: {len(daily_services)}件")
-                # マッチした従業員名を表示
-                matched_names = daily_services['employee'].unique()
-                st.write(f"    マッチした名前: {list(matched_names)}")
-            else:
-                # 利用可能な従業員名を表示
-                available_employees = service_df['employee'].unique()[:10]  # 最初の10名
-                available_normalized = [normalize_name(name) for name in available_employees]
-                st.write(f"    ❌ マッチなし。利用可能な従業員名（最初の10名）:")
-                for orig, norm in zip(available_employees, available_normalized):
-                    st.write(f"      '{orig}' -> 正規化: '{norm}'")
+        debug_log(f"  🔍 従業員名照合: '{employee}' -> 正規化: '{normalized_employee}'")
+        if not daily_services.empty:
+            debug_log(f"    ✅ マッチしたサービス: {len(daily_services)}件")
+            # マッチした従業員名を表示
+            matched_names = daily_services['employee'].unique()
+            debug_log(f"    マッチした名前: {list(matched_names)}")
+        else:
+            # 利用可能な従業員名を表示
+            available_employees = service_df['employee'].unique()[:10]  # 最初の10名
+            available_normalized = [normalize_name(name) for name in available_employees]
+            debug_log("    ❌ マッチなし。利用可能な従業員名（最初の10名）:")
+            for orig, norm in zip(available_employees, available_normalized):
+                debug_log(f"      '{orig}' -> 正規化: '{norm}'")
                 
     except KeyError as e:
         print(f"カラムアクセスエラー: {e}")
@@ -1172,46 +1159,48 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
     if service_df.empty:
         service_df = load_service_data_from_results(workdir)
     
-    # デバッグ情報: サービス実績データの状況
-    if hasattr(st, 'session_state'):
-        st.write(f"📊 サービス実績データ読み込み結果:")
-        st.write(f"  データフレーム形状: {service_df.shape}")
-        if not service_df.empty:
-            st.write(f"  カラム: {service_df.columns.tolist()}")
-            if 'employee' in service_df.columns:
-                unique_employees = service_df['employee'].unique()
-                st.write(f"  従業員数: {len(unique_employees)}")
-                st.write(f"  従業員名（最初の10名）: {list(unique_employees[:10])}")
-            else:
-                st.error("❌ 'employee'カラムが見つかりません")
-            
-            # 日付形式の確認
-            if 'date' in service_df.columns:
-                unique_dates = service_df['date'].unique()
-                st.write(f"  日付数: {len(unique_dates)}")
-                st.write(f"  日付形式サンプル（最初の10件）: {list(unique_dates[:10])}")
-                
-                # 大宮浩子のデータがある日付を確認
-                omiya_data = service_df[service_df['employee_normalized'] == '大宮 浩子']
-                if not omiya_data.empty:
-                    omiya_dates = omiya_data['date'].unique()
-                    st.write(f"  大宮浩子のサービス実績がある日付: {list(omiya_dates[:5])}")
-                else:
-                    st.write("  大宮浩子のサービス実績データなし")
-                
-                # 月別データ分布を確認
-                service_df_temp = service_df.copy()
-                service_df_temp['year_month'] = service_df_temp['date'].str[:7]  # YYYY-MM部分を抽出
-                month_counts = service_df_temp['year_month'].value_counts().sort_index()
-                st.write(f"  📅 月別データ分布: {dict(month_counts)}")
+    # デバッグ情報: サービス実績データの状況（コンソール出力）
+    debug_log("📊 サービス実績データ読み込み結果:")
+    debug_log(f"  データフレーム形状: {service_df.shape}")
+    if not service_df.empty:
+        debug_log(f"  カラム: {service_df.columns.tolist()}")
+        if 'employee' in service_df.columns:
+            unique_employees = service_df['employee'].unique()
+            debug_log(f"  従業員数: {len(unique_employees)}")
+            debug_log(f"  従業員名（最初の10名）: {list(unique_employees[:10])}")
         else:
-            st.error("❌ サービス実績データが空です")
+            debug_log("❌ 'employee'カラムが見つかりません")
+        
+        # 日付形式の確認
+        if 'date' in service_df.columns:
+            unique_dates = service_df['date'].unique()
+            debug_log(f"  日付数: {len(unique_dates)}")
+            debug_log(f"  日付形式サンプル（最初の10件）: {list(unique_dates[:10])}")
+            
+            # 大宮浩子のデータがある日付を確認
+            omiya_data = service_df[service_df['employee_normalized'] == '大宮 浩子']
+            if not omiya_data.empty:
+                omiya_dates = omiya_data['date'].unique()
+                debug_log(f"  大宮浩子のサービス実績がある日付: {list(omiya_dates[:5])}")
+            else:
+                debug_log("  大宮浩子のサービス実績データなし")
+            
+            # 月別データ分布を確認
+            service_df_temp = service_df.copy()
+            service_df_temp['year_month'] = service_df_temp['date'].str[:7]  # YYYY-MM部分を抽出
+            month_counts = service_df_temp['year_month'].value_counts().sort_index()
+            debug_log(f"  📅 月別データ分布: {dict(month_counts)}")
+    else:
+        debug_log("❌ サービス実績データが空です")
     
     # 対象月の全日付を生成
     year, month = map(int, target_month.split('-'))
     days_in_month = calendar.monthrange(year, month)[1]
     all_dates = [f"{year:04d}-{month:02d}-{day:02d}" for day in range(1, days_in_month + 1)]
     
+    # サービス実績が一件でもあれば勤怠のシフトは使わずサービス実績のみで判定
+    prefer_service_only = not service_df.empty
+
     for employee in selected_employees:
         # 従業員IDを勤怠データから取得
         employee_data = attendance_data[
@@ -1238,51 +1227,71 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
             
             # サービス実績データからその日のシフトを取得
             shifts = aggregate_daily_service_times(service_df, employee, date)
-            data_source = "service_data"
+            data_source = "service_data" if shifts else "no_data"
             
-            # サービス実績データがない場合のみ勤怠履歴データから取得
-            if not shifts:
+            # サービス実績が全く無い場合のみ勤怠データをフォールバックで利用
+            if not shifts and not prefer_service_only:
                 shifts = get_attendance_shifts(attendance_data, employee, date)
-                data_source = "attendance_data"
-                
-                # デバッグ情報: どちらのデータも見つからない場合
-                if not shifts:
-                    data_source = "no_data"
+                data_source = "attendance_data" if shifts else "no_data"
             
-            # デバッグ情報をStreamlitに出力（常に表示）
-            if hasattr(st, 'session_state'):
-                st.write(f"🔍 {employee} {date}: データソース={data_source}, シフト数={len(shifts)}")
-                if shifts:
-                    for i, shift in enumerate(shifts):
-                        st.write(f"  元シフト{i+1}: {shift['work_start']}-{shift['work_end']}")
+            # デバッグ情報はコンソールに出力
+            debug_log(f"🔍 {employee} {date}: データソース={data_source}, シフト数={len(shifts)}")
+            if shifts:
+                for i, shift in enumerate(shifts):
+                    debug_log(f"  元シフト{i+1}: {shift['work_start']}-{shift['work_end']}")
             
             if shifts:
                 # シフトがある場合、1時間半ルールで最適化
                 merged_shifts = merge_overlapping_shifts(shifts)
                 
                 # デバッグ情報: 最適化結果（常に表示）
-                if hasattr(st, 'session_state'):
-                    st.write(f"  最適化前: {len(shifts)}シフト -> 最適化後: {len(merged_shifts)}シフト")
-                    for i, shift in enumerate(merged_shifts):
-                        st.write(f"    最適化シフト{i+1}: {shift['work_start']}-{shift['work_end']}")
+                debug_log(f"  最適化前: {len(shifts)}シフト -> 最適化後: {len(merged_shifts)}シフト")
+                for i, shift in enumerate(merged_shifts):
+                    debug_log(f"    最適化シフト{i+1}: {shift['work_start']}-{shift['work_end']}")
             else:
                 # どちらのデータからもシフトが取得できない場合は空のシフト
                 merged_shifts = []
-                if hasattr(st, 'session_state'):
-                    st.warning(f"⚠️ {employee} {date}: シフトデータが見つかりません")
+                debug_log(f"⚠️ {employee} {date}: シフトデータが見つかりません")
             
-            # 出勤・退勤は24時間固定、以降は空欄
-            if work_start_base < len(headers):
-                row[work_start_base] = '0:00'
-            if work_start_base + 1 < len(headers):
-                row[work_start_base + 1] = '24:00'
-            for shift_idx in range(1, 10):
+            # 出勤・退勤枠を初期化
+            for shift_idx in range(0, 10):
                 start_index = work_start_base + (shift_idx * 2)
                 end_index = start_index + 1
                 if start_index < len(headers):
                     row[start_index] = ''
                 if end_index < len(headers):
                     row[end_index] = ''
+
+            if merged_shifts:
+                # 最適化後のシフトを出力（最大10枠）
+                for shift_idx, shift in enumerate(merged_shifts[:10]):
+                    start_index = work_start_base + (shift_idx * 2)
+                    end_index = start_index + 1
+                    if start_index < len(headers):
+                        row[start_index] = format_time_for_csv(shift['work_start'])
+                    if end_index < len(headers):
+                        row[end_index] = format_time_for_csv(shift['work_end'])
+
+                # 労働時間をシフト合計から計算
+                total_minutes = 0
+                for shift in merged_shifts:
+                    start_min = time_to_minutes(shift['work_start'])
+                    end_min = time_to_minutes(shift['work_end'], True)
+                    total_minutes += max(0, end_min - start_min)
+
+                total_time = minutes_to_time(total_minutes)
+                row[labor_indices['total']] = total_time
+                row[labor_indices['actual']] = total_time
+                row[labor_indices['break']] = '0:00'
+                row[labor_indices['overtime_total']] = '0:00'
+                row[labor_indices['overtime_external']] = '0:00'
+            else:
+                # サービス記録が無い日は空欄のまま出力
+                row[labor_indices['total']] = ''
+                row[labor_indices['actual']] = ''
+                row[labor_indices['break']] = ''
+                row[labor_indices['overtime_total']] = ''
+                row[labor_indices['overtime_external']] = ''
             
             # 管理情報の設定（勤務状況、遅刻取消処理等）- 空欄のまま
             # row[95-99]は既に''で初期化されているので何もしない
@@ -1300,13 +1309,6 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
             for idx in status_indices:
                 if idx < len(headers):
                     row[idx] = ''
-            
-            # 労働時間の設定（固定値）
-            row[labor_indices['total']] = '24:00'
-            row[labor_indices['actual']] = '23:00'
-            row[labor_indices['break']] = '1:00'
-            row[labor_indices['overtime_total']] = '16:00'
-            row[labor_indices['overtime_external']] = '16:00'
             
             # CSVの1行として追加
             enforce_forced_empty_fields(row, forced_empty_indices)
@@ -1498,7 +1500,13 @@ def show_optimal_attendance_export():
     """最適勤怠データ出力UI"""
     
     # デバッグモードの設定
-    debug_mode = st.checkbox("🔍 デバッグモードを有効にする", value=False, help="データソースや最適化処理の詳細情報を表示します")
+    if "debug_mode" not in st.session_state:
+        st.session_state.debug_mode = False  # 初期状態はオフ
+    debug_mode = st.checkbox(
+        "🔍 デバッグモードを有効にする",
+        value=st.session_state.debug_mode,
+        help="データソースや最適化処理の詳細情報を表示します"
+    )
     st.session_state.debug_mode = debug_mode
     
     # 勤怠データの読み込み確認

@@ -285,15 +285,36 @@ def minutes_to_time(minutes: int) -> str:
     mins = minutes % 60
     return f"{hours}:{mins:02d}"
 
+
+def minutes_to_time_overflow(minutes: int) -> str:
+    """24時超えを許容した時刻文字列に変換"""
+    hours = minutes // 60
+    mins = minutes % 60
+    return f"{hours}:{mins:02d}"
+
 def debug_log(message: str) -> None:
     """デバッグ出力を抑止"""
     return
 
-def format_time_for_csv(time_str: str) -> str:
+def format_time_for_csv(time_str: str, is_end_time: bool = False, reference_start: Optional[str] = None) -> str:
     """CSV出力用の時間フォーマット"""
     if not time_str or time_str == '':
         return ''
-    return time_str
+
+    if not is_end_time or not reference_start:
+        return time_str
+
+    end_str = str(time_str).strip()
+    start_min = time_to_minutes(reference_start, False)
+    end_min = time_to_minutes(end_str, True, reference_start)
+
+    if end_min >= 24 * 60:
+        return minutes_to_time_overflow(end_min)
+
+    if end_str in ('0:00', '00:00'):
+        return '24:00'
+
+    return end_str
 
 # 休憩時間の列ペア（実績側10枠）
 BREAK_COLUMN_PAIRS: List[Tuple[str, str]] = [(f"休憩{i}", f"復帰{i}") for i in range(1, 11)]
@@ -1277,7 +1298,11 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
                     if start_index < len(headers):
                         row[start_index] = format_time_for_csv(shift['work_start'])
                     if end_index < len(headers):
-                        row[end_index] = format_time_for_csv(shift['work_end'])
+                        row[end_index] = format_time_for_csv(
+                            shift['work_end'],
+                            is_end_time=True,
+                            reference_start=shift['work_start']
+                        )
 
                 # 労働時間をシフト合計から計算
                 total_minutes = 0

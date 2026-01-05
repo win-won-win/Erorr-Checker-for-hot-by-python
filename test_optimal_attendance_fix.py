@@ -77,6 +77,9 @@ def test_time_conversion():
     for time_str, expected_minutes in test_cases:
         result = time_to_minutes(time_str)
         print(f"{time_str} -> {result}分 (期待値: {expected_minutes}分)")
+
+    overnight_end = time_to_minutes('1:00', True, '23:30')
+    print(f"23:30-1:00 の退勤 -> {overnight_end}分 (期待値: 1500分)")
         
     # 逆変換テスト
     for time_str, minutes in test_cases:

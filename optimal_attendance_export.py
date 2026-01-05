@@ -254,19 +254,26 @@ def dataframe_to_jinjer_csv_bytes(
     normalized_df.to_csv(buffer, index=False)
     return buffer.getvalue().encode(encoding, errors='ignore')
 
-def time_to_minutes(time_str: str, is_end_time: bool = False) -> int:
+def time_to_minutes(time_str: str, is_end_time: bool = False, reference_start: Optional[str] = None) -> int:
     """時間を分に変換（24時間対応）"""
     if not time_str or time_str == '':
         return 0
-    
+
     if time_str == '24:00' or (time_str == '0:00' and is_end_time):
         return 24 * 60  # 1440分
-    
+
     try:
         parts = time_str.split(':')
         hours = int(parts[0])
         minutes = int(parts[1]) if len(parts) > 1 else 0
-        return hours * 60 + minutes
+        total = hours * 60 + minutes
+
+        if is_end_time and reference_start:
+            start_minutes = time_to_minutes(reference_start, False)
+            if total < start_minutes:
+                total += 24 * 60
+
+        return total
     except:
         return 0
 
@@ -634,24 +641,24 @@ def merge_overlapping_shifts(shifts: List[Dict]) -> List[Dict]:
             continue
             
         current_start = time_to_minutes(shift['work_start'], False)
-        current_end = time_to_minutes(shift['work_end'], True)
+        current_end = time_to_minutes(shift['work_end'], True, shift['work_start'])
         
         # 最後に追加されたシフトと重複・連続チェック
         if merged:
             last_shift = merged[-1]
-            last_end = time_to_minutes(last_shift['work_end'], True)
+            last_end = time_to_minutes(last_shift['work_end'], True, last_shift['work_start'])
             
             # 1時間半（90分）未満の間隔は連続とみなす
             if current_start - last_end < 90:
-                # 結合：終了時間を延長
-                new_end_time = max(last_end, current_end)
-                last_shift['work_end'] = minutes_to_time(new_end_time)
+                # 結合：終了時間を延長（翌日跨ぎを考慮して元の文字列を維持）
+                if current_end > last_end:
+                    last_shift['work_end'] = shift['work_end']
                 continue
         
         # 新しいシフトとして追加
         merged.append({
-            'work_start': minutes_to_time(current_start),
-            'work_end': minutes_to_time(current_end)
+            'work_start': shift['work_start'],
+            'work_end': shift['work_end']
         })
     
     return merged
@@ -1276,7 +1283,7 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
                 total_minutes = 0
                 for shift in merged_shifts:
                     start_min = time_to_minutes(shift['work_start'])
-                    end_min = time_to_minutes(shift['work_end'], True)
+                    end_min = time_to_minutes(shift['work_end'], True, shift['work_start'])
                     total_minutes += max(0, end_min - start_min)
 
                 total_time = minutes_to_time(total_minutes)

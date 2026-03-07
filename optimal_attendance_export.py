@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import io
+import random
 from typing import List, Dict, Any, Optional, Tuple
 import calendar
 import re
@@ -465,10 +466,18 @@ def _would_violate_consecutive(work_flags: List[bool], idx: int) -> bool:
         i += 1
     return (left + 1 + right) >= 6
 
-def _adjust_monthly_shifts(shifts_by_date: Dict[str, List[Dict]], all_dates: List[str]) -> Dict[str, List[Dict]]:
+def _make_shuffled_indices(all_dates: List[str], seed_key: str) -> List[int]:
+    """人間らしいばらつきを作るため、日付インデックスを固定シードでシャッフル"""
+    rng = random.Random(seed_key)
+    indices = list(range(len(all_dates)))
+    rng.shuffle(indices)
+    return indices
+
+def _adjust_monthly_shifts(shifts_by_date: Dict[str, List[Dict]], all_dates: List[str], seed_key: str) -> Dict[str, List[Dict]]:
     """月合計160h未満の場合のみ、日中帯で勤務を追加して調整する。"""
     month_total = sum(_counted_minutes(shifts_by_date.get(date, [])) for date in all_dates)
-    if month_total >= MONTH_MINUTES_TARGET:
+    # 「160時間を超える」ことが条件
+    if month_total > MONTH_MINUTES_TARGET:
         return shifts_by_date
 
     # 1) 9h未満の勤務日は9hへ
@@ -483,15 +492,16 @@ def _adjust_monthly_shifts(shifts_by_date: Dict[str, List[Dict]], all_dates: Lis
 
     # 再計算
     month_total = sum(_counted_minutes(shifts_by_date.get(date, [])) for date in all_dates)
-    if month_total >= MONTH_MINUTES_TARGET:
+    if month_total > MONTH_MINUTES_TARGET:
         return shifts_by_date
 
-    remaining = MONTH_MINUTES_TARGET - month_total
+    remaining = (MONTH_MINUTES_TARGET + 1) - month_total
 
     # 2) 既存勤務日に追加（10h上限、集計8h未満のみに限定）
-    for date in all_dates:
+    for idx in _make_shuffled_indices(all_dates, seed_key + "_existing"):
         if remaining <= 0:
             break
+        date = all_dates[idx]
         shifts = shifts_by_date.get(date, [])
         if not shifts:
             continue
@@ -506,16 +516,18 @@ def _adjust_monthly_shifts(shifts_by_date: Dict[str, List[Dict]], all_dates: Lis
         adjusted, added = _adjust_day_shifts(shifts, target)
         if added > 0:
             shifts_by_date[date] = adjusted
-            remaining = max(0, remaining - _counted_minutes(adjusted) + _counted_minutes(shifts))
+            month_total = sum(_counted_minutes(shifts_by_date.get(d, [])) for d in all_dates)
+            remaining = max(0, (MONTH_MINUTES_TARGET + 1) - month_total)
 
     if remaining <= 0:
         return shifts_by_date
 
     # 3) 休みの日に追加（6連勤禁止）
     work_flags = [(_total_minutes(shifts_by_date.get(date, [])) > 0) for date in all_dates]
-    for idx, date in enumerate(all_dates):
+    for idx in _make_shuffled_indices(all_dates, seed_key + "_new"):
         if remaining <= 0:
             break
+        date = all_dates[idx]
         if work_flags[idx]:
             continue
         if _would_violate_consecutive(work_flags, idx):
@@ -525,7 +537,8 @@ def _adjust_monthly_shifts(shifts_by_date: Dict[str, List[Dict]], all_dates: Lis
         adjusted, added = _adjust_day_shifts([], target)
         if added > 0:
             shifts_by_date[date] = adjusted
-            remaining = max(0, remaining - _counted_minutes(adjusted))
+            month_total = sum(_counted_minutes(shifts_by_date.get(d, [])) for d in all_dates)
+            remaining = max(0, (MONTH_MINUTES_TARGET + 1) - month_total)
             work_flags[idx] = True
 
     return shifts_by_date
@@ -1490,7 +1503,8 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
             shifts_by_date[date] = merged_shifts
 
         # 月合計が160h未満の場合のみ、日中帯で追加調整
-        shifts_by_date = _adjust_monthly_shifts(shifts_by_date, all_dates)
+        seed_key = f"{employee}|{target_month}"
+        shifts_by_date = _adjust_monthly_shifts(shifts_by_date, all_dates, seed_key)
 
         for date in all_dates:
             row = [''] * len(headers)

@@ -316,6 +316,210 @@ def format_time_for_csv(time_str: str, is_end_time: bool = False, reference_star
 
     return end_str
 
+# 追加調整ルール用の定数（分）
+DAY_WINDOW_START = 8 * 60   # 08:00
+DAY_WINDOW_END = 18 * 60    # 18:00
+MIN_DAILY_MINUTES = 9 * 60
+MAX_DAILY_MINUTES = 10 * 60
+MONTH_MINUTES_TARGET = 160 * 60
+
+def _shift_minutes(shift: Dict) -> Tuple[int, int]:
+    start = time_to_minutes(shift.get('work_start', ''))
+    end = time_to_minutes(shift.get('work_end', ''), True, shift.get('work_start', ''))
+    return start, end
+
+def _total_minutes(shifts: List[Dict]) -> int:
+    total = 0
+    for shift in shifts:
+        start, end = _shift_minutes(shift)
+        total += max(0, end - start)
+    return total
+
+def _normalize_day_shifts(day_shifts: List[Tuple[int, int]]) -> List[List[int]]:
+    if not day_shifts:
+        return []
+    sorted_shifts = sorted(day_shifts, key=lambda s: s[0])
+    merged: List[List[int]] = [[sorted_shifts[0][0], sorted_shifts[0][1]]]
+    for start, end in sorted_shifts[1:]:
+        last = merged[-1]
+        if start <= last[1]:
+            last[1] = max(last[1], end)
+        else:
+            merged.append([start, end])
+    return merged
+
+def _apply_day_additions(day_shifts: List[Tuple[int, int]], need_add: int) -> Tuple[List[List[int]], int]:
+    """日中帯（08-18）で勤務を追加。既存の時間は削らない。"""
+    if need_add <= 0:
+        return _normalize_day_shifts(day_shifts), 0
+
+    shifts = _normalize_day_shifts(day_shifts)
+    added = 0
+
+    if not shifts:
+        start = DAY_WINDOW_START
+        end = min(DAY_WINDOW_END, start + need_add)
+        if end > start:
+            return [[start, end]], end - start
+        return [], 0
+
+    # 1) 隙間を埋めてシフト数を減らす（必要分だけ）
+    i = 0
+    while i < len(shifts) - 1 and need_add > 0:
+        gap = shifts[i + 1][0] - shifts[i][1]
+        if gap > 0:
+            fill = min(gap, need_add)
+            shifts[i][1] += fill
+            added += fill
+            need_add -= fill
+            if shifts[i][1] >= shifts[i + 1][0]:
+                shifts[i][1] = max(shifts[i][1], shifts[i + 1][1])
+                del shifts[i + 1]
+                continue
+        i += 1
+
+    # 2) 末尾を延長（18:00まで）
+    if need_add > 0:
+        avail = DAY_WINDOW_END - shifts[-1][1]
+        if avail > 0:
+            add = min(avail, need_add)
+            shifts[-1][1] += add
+            added += add
+            need_add -= add
+
+    # 3) 先頭を前倒し（08:00まで）
+    if need_add > 0:
+        avail = shifts[0][0] - DAY_WINDOW_START
+        if avail > 0:
+            add = min(avail, need_add)
+            shifts[0][0] -= add
+            added += add
+            need_add -= add
+
+    return shifts, added
+
+def _adjust_day_shifts(
+    shifts: List[Dict],
+    target_total_minutes: int
+) -> Tuple[List[Dict], int]:
+    """1日の合計勤務時間を目標に近づける（追加のみ、日中帯のみ）。"""
+    current_total = _total_minutes(shifts)
+
+    # 既に目標以上 or 上限超えの既存日は変更しない
+    if current_total >= target_total_minutes or current_total > MAX_DAILY_MINUTES:
+        return shifts, 0
+
+    max_add = max(0, MAX_DAILY_MINUTES - current_total)
+    need_add = min(target_total_minutes - current_total, max_add)
+    if need_add <= 0:
+        return shifts, 0
+
+    day_shifts: List[Tuple[int, int]] = []
+    fixed_shifts: List[Dict] = []
+
+    for shift in shifts:
+        start, end = _shift_minutes(shift)
+        if end <= start:
+            fixed_shifts.append(shift)
+            continue
+        # 日中帯のみ対象
+        if DAY_WINDOW_START <= start and end <= DAY_WINDOW_END:
+            day_shifts.append((start, end))
+        else:
+            fixed_shifts.append(shift)
+
+    updated_day_shifts, added = _apply_day_additions(day_shifts, need_add)
+    if added <= 0:
+        return shifts, 0
+
+    # 日中帯シフトを作り直し、他シフトはそのまま
+    rebuilt: List[Dict] = []
+    for start, end in updated_day_shifts:
+        if end > start:
+            rebuilt.append({
+                'work_start': minutes_to_time(start),
+                'work_end': minutes_to_time(end)
+            })
+    rebuilt.extend(fixed_shifts)
+
+    rebuilt = sorted(rebuilt, key=lambda s: time_to_minutes(s.get('work_start', '0:00')))
+    return rebuilt, added
+
+def _would_violate_consecutive(work_flags: List[bool], idx: int) -> bool:
+    if work_flags[idx]:
+        return False
+    left = 0
+    i = idx - 1
+    while i >= 0 and work_flags[i]:
+        left += 1
+        i -= 1
+    right = 0
+    i = idx + 1
+    while i < len(work_flags) and work_flags[i]:
+        right += 1
+        i += 1
+    return (left + 1 + right) >= 6
+
+def _adjust_monthly_shifts(shifts_by_date: Dict[str, List[Dict]], all_dates: List[str]) -> Dict[str, List[Dict]]:
+    """月合計160h未満の場合のみ、日中帯で勤務を追加して調整する。"""
+    month_total = sum(_total_minutes(shifts_by_date.get(date, [])) for date in all_dates)
+    if month_total >= MONTH_MINUTES_TARGET:
+        return shifts_by_date
+
+    # 1) 9h未満の勤務日は9hへ
+    for date in all_dates:
+        shifts = shifts_by_date.get(date, [])
+        if not shifts:
+            continue
+        total = _total_minutes(shifts)
+        if 0 < total < MIN_DAILY_MINUTES:
+            adjusted, _ = _adjust_day_shifts(shifts, MIN_DAILY_MINUTES)
+            shifts_by_date[date] = adjusted
+
+    # 再計算
+    month_total = sum(_total_minutes(shifts_by_date.get(date, [])) for date in all_dates)
+    if month_total >= MONTH_MINUTES_TARGET:
+        return shifts_by_date
+
+    remaining = MONTH_MINUTES_TARGET - month_total
+
+    # 2) 既存勤務日に追加（10h上限）
+    for date in all_dates:
+        if remaining <= 0:
+            break
+        shifts = shifts_by_date.get(date, [])
+        if not shifts:
+            continue
+        total = _total_minutes(shifts)
+        if total >= MAX_DAILY_MINUTES:
+            continue
+        target = min(MAX_DAILY_MINUTES, total + remaining)
+        adjusted, added = _adjust_day_shifts(shifts, target)
+        if added > 0:
+            shifts_by_date[date] = adjusted
+            remaining -= added
+
+    if remaining <= 0:
+        return shifts_by_date
+
+    # 3) 休みの日に追加（6連勤禁止）
+    work_flags = [(_total_minutes(shifts_by_date.get(date, [])) > 0) for date in all_dates]
+    for idx, date in enumerate(all_dates):
+        if remaining <= 0:
+            break
+        if work_flags[idx]:
+            continue
+        if _would_violate_consecutive(work_flags, idx):
+            continue
+        target = min(MAX_DAILY_MINUTES, remaining)
+        adjusted, added = _adjust_day_shifts([], target)
+        if added > 0:
+            shifts_by_date[date] = adjusted
+            remaining -= added
+            work_flags[idx] = True
+
+    return shifts_by_date
+
 # 休憩時間の列ペア（実績側10枠）
 BREAK_COLUMN_PAIRS: List[Tuple[str, str]] = [(f"休憩{i}", f"復帰{i}") for i in range(1, 11)]
 FULL_WIDTH_DIGIT_MAP = str.maketrans("０１２３４５６７８９", "0123456789")
@@ -1242,17 +1446,10 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
         # 勤怠データにない場合はフォールバック関数を使用
         if not employee_id or employee_id == 'nan':
             employee_id = get_employee_id(employee)
-        
+
+        # まず全日分のシフトを構築
+        shifts_by_date: Dict[str, List[Dict]] = {}
         for date in all_dates:
-            row = [''] * len(headers)
-            
-            # 基本情報の設定
-            row[0] = employee  # 名前
-            row[1] = employee_id  # *従業員ID
-            row[2] = date  # *年月日
-            row[3] = '1'  # *打刻グループID
-            row[4] = '株式会社hot'  # 所属グループ名
-            
             # サービス実績データからその日のシフトを取得
             shifts = aggregate_daily_service_times(service_df, employee, date)
             data_source = "service_data" if shifts else "no_data"
@@ -1280,7 +1477,23 @@ def generate_jinjer_csv(selected_employees: List[str], target_month: str, attend
                 # どちらのデータからもシフトが取得できない場合は空のシフト
                 merged_shifts = []
                 debug_log(f"⚠️ {employee} {date}: シフトデータが見つかりません")
-            
+            shifts_by_date[date] = merged_shifts
+
+        # 月合計が160h未満の場合のみ、日中帯で追加調整
+        shifts_by_date = _adjust_monthly_shifts(shifts_by_date, all_dates)
+
+        for date in all_dates:
+            row = [''] * len(headers)
+
+            # 基本情報の設定
+            row[0] = employee  # 名前
+            row[1] = employee_id  # *従業員ID
+            row[2] = date  # *年月日
+            row[3] = '1'  # *打刻グループID
+            row[4] = '株式会社hot'  # 所属グループ名
+
+            merged_shifts = shifts_by_date.get(date, [])
+
             # 出勤・退勤枠を初期化
             for shift_idx in range(0, 10):
                 start_index = work_start_base + (shift_idx * 2)

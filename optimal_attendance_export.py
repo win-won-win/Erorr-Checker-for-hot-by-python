@@ -322,6 +322,7 @@ DAY_WINDOW_END = 18 * 60    # 18:00
 MIN_DAILY_MINUTES = 9 * 60
 MAX_DAILY_MINUTES = 10 * 60
 MONTH_MINUTES_TARGET = 160 * 60
+COUNTED_DAILY_CAP = 8 * 60
 
 def _shift_minutes(shift: Dict) -> Tuple[int, int]:
     start = time_to_minutes(shift.get('work_start', ''))
@@ -334,6 +335,10 @@ def _total_minutes(shifts: List[Dict]) -> int:
         start, end = _shift_minutes(shift)
         total += max(0, end - start)
     return total
+
+def _counted_minutes(shifts: List[Dict]) -> int:
+    """月合計集計用（1日最大8時間）"""
+    return min(_total_minutes(shifts), COUNTED_DAILY_CAP)
 
 def _normalize_day_shifts(day_shifts: List[Tuple[int, int]]) -> List[List[int]]:
     if not day_shifts:
@@ -462,7 +467,7 @@ def _would_violate_consecutive(work_flags: List[bool], idx: int) -> bool:
 
 def _adjust_monthly_shifts(shifts_by_date: Dict[str, List[Dict]], all_dates: List[str]) -> Dict[str, List[Dict]]:
     """月合計160h未満の場合のみ、日中帯で勤務を追加して調整する。"""
-    month_total = sum(_total_minutes(shifts_by_date.get(date, [])) for date in all_dates)
+    month_total = sum(_counted_minutes(shifts_by_date.get(date, [])) for date in all_dates)
     if month_total >= MONTH_MINUTES_TARGET:
         return shifts_by_date
 
@@ -477,27 +482,31 @@ def _adjust_monthly_shifts(shifts_by_date: Dict[str, List[Dict]], all_dates: Lis
             shifts_by_date[date] = adjusted
 
     # 再計算
-    month_total = sum(_total_minutes(shifts_by_date.get(date, [])) for date in all_dates)
+    month_total = sum(_counted_minutes(shifts_by_date.get(date, [])) for date in all_dates)
     if month_total >= MONTH_MINUTES_TARGET:
         return shifts_by_date
 
     remaining = MONTH_MINUTES_TARGET - month_total
 
-    # 2) 既存勤務日に追加（10h上限）
+    # 2) 既存勤務日に追加（10h上限、集計8h未満のみに限定）
     for date in all_dates:
         if remaining <= 0:
             break
         shifts = shifts_by_date.get(date, [])
         if not shifts:
             continue
+        if _counted_minutes(shifts) >= COUNTED_DAILY_CAP:
+            continue
         total = _total_minutes(shifts)
         if total >= MAX_DAILY_MINUTES:
             continue
-        target = min(MAX_DAILY_MINUTES, total + remaining)
+        # 8時間集計に届くように追加（ただし1日10時間まで）
+        need_for_count = min(COUNTED_DAILY_CAP, total + remaining)
+        target = min(MAX_DAILY_MINUTES, max(total, need_for_count))
         adjusted, added = _adjust_day_shifts(shifts, target)
         if added > 0:
             shifts_by_date[date] = adjusted
-            remaining -= added
+            remaining = max(0, remaining - _counted_minutes(adjusted) + _counted_minutes(shifts))
 
     if remaining <= 0:
         return shifts_by_date
@@ -511,11 +520,12 @@ def _adjust_monthly_shifts(shifts_by_date: Dict[str, List[Dict]], all_dates: Lis
             continue
         if _would_violate_consecutive(work_flags, idx):
             continue
-        target = min(MAX_DAILY_MINUTES, remaining)
+        # 新規勤務日は8-18で10h入れる（集計は8h）
+        target = MAX_DAILY_MINUTES
         adjusted, added = _adjust_day_shifts([], target)
         if added > 0:
             shifts_by_date[date] = adjusted
-            remaining -= added
+            remaining = max(0, remaining - _counted_minutes(adjusted))
             work_flags[idx] = True
 
     return shifts_by_date

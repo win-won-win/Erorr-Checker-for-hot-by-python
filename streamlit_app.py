@@ -1047,6 +1047,9 @@ def show_card_view(df: pd.DataFrame) -> None:
 # ページ設定
 st.set_page_config(page_title="重複チェッカー for hot", layout="wide")
 
+# アプリ最終更新日時（READMEの更新ルールに従って手動更新）
+APP_LAST_UPDATED = "2026-03-12 13:00"
+
 # カスタムCSS
 st.markdown("""
 <style>
@@ -1102,7 +1105,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("重複チェッカー for hot")
+header_cols = st.columns([5, 1])
+with header_cols[0]:
+    st.title("重複チェッカー for hot")
+with header_cols[1]:
+    st.caption(f"最終更新日時: {APP_LAST_UPDATED}")
 
 # セッション状態の初期化
 if 'processing_complete' not in st.session_state:

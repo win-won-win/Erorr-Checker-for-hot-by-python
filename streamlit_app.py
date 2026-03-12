@@ -684,6 +684,30 @@ def normalize_staff_list(raw_value: Any) -> str:
     
     return ' / '.join(normalized_parts)
 
+def normalize_kana_sort_key(value: Any) -> str:
+    """かなソート用の正規化キーを作成する。"""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text or text.lower() == "nan":
+        return ""
+    try:
+        import unicodedata
+        text = unicodedata.normalize("NFKC", text)
+    except Exception:
+        pass
+    # カタカナ→ひらがなに統一
+    chars = []
+    for ch in text:
+        code = ord(ch)
+        if 0x30A1 <= code <= 0x30F6:
+            chars.append(chr(code - 0x60))
+        else:
+            chars.append(ch)
+    text = "".join(chars)
+    # ソートノイズを除去
+    return text.replace("ー", "").replace("・", "").replace(" ", "").replace("　", "")
+
 def prepare_grid_data(result_paths):
     """
     result_*.csvファイルからグリッド表示用のDataFrameを作成
@@ -1431,6 +1455,24 @@ with tab1:
                     st.error(f"読み込みエラー: {service_file}")
             
             st.session_state.service_data_list = service_data_list
+            # 利用者名 -> 利用者名カナ の対応表を作成（最初の非空を採用）
+            user_kana_map = {}
+            for svc_df in service_data_list:
+                if not isinstance(svc_df, pd.DataFrame):
+                    continue
+                if "利用者名" not in svc_df.columns or "利用者名カナ" not in svc_df.columns:
+                    continue
+                sub = svc_df[["利用者名", "利用者名カナ"]].dropna()
+                for _, row in sub.iterrows():
+                    name = str(row.get("利用者名", "")).strip()
+                    kana = str(row.get("利用者名カナ", "")).strip()
+                    if not name or name.lower() == "nan":
+                        continue
+                    if not kana or kana.lower() == "nan":
+                        continue
+                    if name not in user_kana_map:
+                        user_kana_map[name] = kana
+            st.session_state.user_kana_map = user_kana_map
             
             if len(actual_service_files) == 0:
                 st.error("サービス実態CSVファイルが保存されませんでした")
@@ -1536,7 +1578,12 @@ with tab2:
                 
                 with col_user:
                     available_users = [user for user in grid_df['利用者名'].dropna().unique() if user != '']
-                    selected_users = st.multiselect("利用者", sorted(available_users), key="user_filter_main")
+                    user_kana_map = st.session_state.get("user_kana_map", {})
+                    sorted_users = sorted(
+                        available_users,
+                        key=lambda u: normalize_kana_sort_key(user_kana_map.get(u, u))
+                    )
+                    selected_users = st.multiselect("利用者", sorted_users, key="user_filter_main")
                 
                 # フィルタリング処理
                 filtered_df = grid_df.copy()

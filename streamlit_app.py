@@ -767,6 +767,7 @@ def prepare_grid_data(result_paths):
                 '重複利用者名': duplicate_user_name,
                 '重複エラー事業所名': duplicate_facility_display,
                 '重複サービス時間': duplicate_service_time,
+                '代替除外理由': row.get('代替除外理由', ''),
                 '日付': row.get('日付', ''),
                 '開始時間': row.get('開始時間', ''),
                 '終了時間': row.get('終了時間', ''),
@@ -912,16 +913,18 @@ def _format_error_badges(category_text: str) -> str:
         return ""
 
     icon_map = {
-        "移動時間不足": ("commute", "移動時間不足"),
-        "施設間重複": ("swap_horiz", "施設間重複"),
-        "事業所内重複": ("repeat", "同一従業員別サービス時間重複"),
-        "勤怠履歴超過": ("schedule", "勤怠履歴超過"),
+        "移動時間不足": ("commute", "移動時間不足", "#16a34a"),
+        "施設間重複": ("swap_horiz", "施設間重複", "#f59e0b"),
+        "事業所内重複": ("repeat", "同一従業員別サービス時間重複", "#f59e0b"),
+        "勤怠履歴超過": ("schedule", "勤怠履歴超過", "#dc2626"),
     }
 
     badges = []
     for part in parts:
-        icon_name, label = icon_map.get(part, ("error", part))
-        badges.append(f":material/{icon_name}: {label}")
+        icon_name, label, color = icon_map.get(part, ("error", part, "#6b7280"))
+        badges.append(
+            f":material/{icon_name}: <span style=\"color:{color}; font-weight:600;\">{label}</span>"
+        )
     return "  ·  ".join(badges)
 
 @lru_cache(maxsize=32)
@@ -961,6 +964,7 @@ def show_card_view(df: pd.DataFrame) -> None:
         coverage = _safe_text(row.get("カバー状況"))
         error_mark = _safe_text(row.get("エラー"))
         category = _safe_text(row.get("カテゴリ"))
+        exclusion_reason = _safe_text(row.get("代替除外理由"))
         error_badges = _format_error_badges(category)
 
         detail_lines: List[str] = []
@@ -1018,7 +1022,7 @@ def show_card_view(df: pd.DataFrame) -> None:
             with row_cols[1]:
                 st.markdown(f"**{date_text}　{start_time} 〜 {end_time}**")
                 if error_badges:
-                    st.markdown(error_badges)
+                    st.markdown(error_badges, unsafe_allow_html=True)
                 st.caption(f"担当者: {staff_name}")
                 st.caption(f"代替従業員: {alt_staff}")
             with row_cols[2]:
@@ -1030,6 +1034,13 @@ def show_card_view(df: pd.DataFrame) -> None:
                         "ℹ️",
                         key=f"detail_hint_{idx}",
                         help=tooltip_text,
+                        disabled=True
+                    )
+                if exclusion_reason:
+                    st.button(
+                        "🧾",
+                        key=f"exclude_hint_{idx}",
+                        help=exclusion_reason,
                         disabled=True
                     )
 

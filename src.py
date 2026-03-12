@@ -528,7 +528,75 @@ def build_staff_busy_map(service_dfs: Dict[str, pd.DataFrame], att_keys: Optiona
         busy[staff] = merged
     return busy
 
-def list_available_staff(target: Interval, att_map: Dict[str, List[Interval]], busy_map: Dict[str, List[Interval]], exclude: str, att_name_index: Optional[Dict[str, List[str]]] = None) -> List[str]:
+def build_staff_service_timeline(service_dfs: Dict[str, pd.DataFrame], att_keys: Optional[Iterable[str]] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    従業員ごとのサービス履歴（時系列）を構築する。
+    住所（サービス提供責任者列に入っている値）を保持して移動時間判定に使う。
+    """
+    timeline: Dict[str, List[Dict[str, Any]]] = {}
+    att_key_list = list(att_keys) if att_keys is not None else None
+    for _, df in service_dfs.items():
+        for _, r in df.iterrows():
+            if pd.isna(r["_開始DT"]) or pd.isna(r["_終了DT"]):
+                continue
+            staff = r["_担当所員_norm"]
+            if att_key_list:
+                resolved = resolve_name_key(staff, att_key_list)
+                staff = resolved if resolved is not None else staff
+            timeline.setdefault(staff, []).append({
+                "interval": Interval(r["_開始DT"], r["_終了DT"]),
+                "loc_norm": r.get("_移動住所_norm", ""),
+            })
+    for staff, items in list(timeline.items()):
+        items.sort(key=lambda x: (x["interval"].start, x["interval"].end))
+        timeline[staff] = items
+    return timeline
+
+def _can_insert_with_travel_gap(target: Interval, target_loc_norm: str, staff_timeline: List[Dict[str, Any]]) -> bool:
+    """
+    対象サービスを挿入したとき、前後サービスとの住所差がある場合に
+    30分以上の間隔があるかを確認する。
+    """
+    if not target_loc_norm:
+        return True
+    if not staff_timeline:
+        return True
+
+    prev_item = None
+    next_item = None
+    for item in staff_timeline:
+        iv = item["interval"]
+        if iv.end <= target.start:
+            prev_item = item
+        elif iv.start >= target.end:
+            next_item = item
+            break
+
+    if prev_item:
+        prev_loc = prev_item.get("loc_norm") or ""
+        if prev_loc and prev_loc != target_loc_norm:
+            gap_minutes = int((target.start - prev_item["interval"].end).total_seconds() / 60)
+            if gap_minutes < TRAVEL_GAP_MINUTES:
+                return False
+
+    if next_item:
+        next_loc = next_item.get("loc_norm") or ""
+        if next_loc and next_loc != target_loc_norm:
+            gap_minutes = int((next_item["interval"].start - target.end).total_seconds() / 60)
+            if gap_minutes < TRAVEL_GAP_MINUTES:
+                return False
+
+    return True
+
+def list_available_staff(
+    target: Interval,
+    att_map: Dict[str, List[Interval]],
+    busy_map: Dict[str, List[Interval]],
+    exclude: str,
+    att_name_index: Optional[Dict[str, List[str]]] = None,
+    staff_timeline_map: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    target_loc_norm: str = "",
+) -> List[str]:
     """
     指定区間 target において、
       - 勤怠的に target を丸ごとカバーしている
@@ -550,6 +618,9 @@ def list_available_staff(target: Interval, att_map: Dict[str, List[Interval]], b
                 conflict = True
                 break
         if not conflict:
+            if staff_timeline_map is not None:
+                if not _can_insert_with_travel_gap(target, target_loc_norm, staff_timeline_map.get(name, [])):
+                    continue
             # pretty name: first seen original for this normalized key
             if att_name_index and name in att_name_index and att_name_index[name]:
                 candidates.append(att_name_index[name][0])
@@ -563,6 +634,88 @@ def list_available_staff(target: Interval, att_map: Dict[str, List[Interval]], b
         if x not in seen:
             seen.add(x); ordered.append(x)
     return ordered
+
+def list_available_staff_with_reasons(
+    target: Interval,
+    att_map: Dict[str, List[Interval]],
+    busy_map: Dict[str, List[Interval]],
+    exclude: str,
+    att_name_index: Optional[Dict[str, List[str]]] = None,
+    staff_timeline_map: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    target_loc_norm: str = "",
+) -> Tuple[List[str], Dict[str, List[str]]]:
+    """
+    代替候補の抽出と、除外理由（勤怠カバー不足/サービス重複/移動時間不足）を返す。
+    """
+    def pretty_name(key: str) -> str:
+        if att_name_index and key in att_name_index and att_name_index[key]:
+            return att_name_index[key][0]
+        return key
+
+    excluded: Dict[str, List[str]] = {
+        "勤怠カバー不足": [],
+        "サービス重複": [],
+        "移動時間不足": [],
+    }
+    candidates: List[str] = []
+
+    exclude_key = resolve_name_key(exclude, att_map.keys()) if exclude else exclude
+    for name, work_ivs in att_map.items():
+        if exclude_key and name == exclude_key:
+            continue
+
+        reasons: List[str] = []
+        if not interval_fully_covered(target, work_ivs):
+            reasons.append("勤怠カバー不足")
+
+        conflict = False
+        for busy_iv in busy_map.get(name, []):
+            if target.overlaps(busy_iv):
+                conflict = True
+                break
+        if conflict:
+            reasons.append("サービス重複")
+
+        if staff_timeline_map is not None:
+            if not _can_insert_with_travel_gap(target, target_loc_norm, staff_timeline_map.get(name, [])):
+                reasons.append("移動時間不足")
+
+        if reasons:
+            for r in reasons:
+                excluded[r].append(pretty_name(name))
+            continue
+
+        candidates.append(pretty_name(name))
+
+    # unique preserve order
+    seen = set()
+    ordered = []
+    for x in candidates:
+        if x not in seen:
+            seen.add(x)
+            ordered.append(x)
+
+    for k, vals in list(excluded.items()):
+        uniq = []
+        seen = set()
+        for v in vals:
+            if v not in seen:
+                seen.add(v)
+                uniq.append(v)
+        excluded[k] = uniq
+
+    return ordered, excluded
+
+def format_exclusion_reasons(excluded: Dict[str, List[str]]) -> str:
+    """除外理由を人が読みやすい文字列に整形する。"""
+    parts = []
+    if excluded.get("移動時間不足"):
+        parts.append(f"移動時間不足で除外: {' / '.join(excluded['移動時間不足'])}")
+    if excluded.get("勤怠カバー不足"):
+        parts.append(f"勤怠履歴で除外: {' / '.join(excluded['勤怠カバー不足'])}")
+    if excluded.get("サービス重複"):
+        parts.append(f"サービス重複で除外: {' / '.join(excluded['サービス重複'])}")
+    return " | ".join(parts)
 
 def find_overlaps_with_details(df1: pd.DataFrame, df2: pd.DataFrame, 
                               facility1: str, facility2: str) -> List[OverlapInfo]:
@@ -1039,7 +1192,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         # 新規詳細カラムの初期化
         detail_columns = ['重複時間（分）', '超過時間（分）', '重複相手施設', '重複相手担当者',
                          '重複利用者名', '重複タイプ', '重複サービス時間', 'カバー状況', '勤務区間数', '詳細ID', '勤務時間詳細',
-                         'カバー済み区間', '未カバー区間', '勤務時間外詳細', '移動時間不足詳細']
+                         'カバー済み区間', '未カバー区間', '勤務時間外詳細', '移動時間不足詳細', '代替除外理由']
         
         for col in detail_columns:
             if col not in df.columns:
@@ -1123,14 +1276,25 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
 
     # 2) 施設間重複・事業所内重複の補正案（代替職員リスト）
     busy_map = build_staff_busy_map(service_raw, att_keys=att_map.keys())
+    staff_timeline_map = build_staff_service_timeline(service_raw, att_keys=att_map.keys())
     for fac, df in service_raw.items():
         # 施設間重複または事業所内重複のレコードを対象
         need_rows = df[df[CAT_COL].str.contains("重複", na=False)]
         for idx, r in need_rows.iterrows():
             iv = Interval(r["_開始DT"], r["_終了DT"])
             staff = r["_担当所員_norm"]
-            alts = list_available_staff(iv, att_map, busy_map, exclude=staff, att_name_index=att_name_index)
+            target_loc_norm = r.get("_移動住所_norm", "")
+            alts, excluded = list_available_staff_with_reasons(
+                iv,
+                att_map,
+                busy_map,
+                exclude=staff,
+                att_name_index=att_name_index,
+                staff_timeline_map=staff_timeline_map,
+                target_loc_norm=target_loc_norm,
+            )
             df.at[idx, ALT_COL] = alt_delim.join(alts) if alts else "ー"
+            df.at[idx, "代替除外理由"] = format_exclusion_reasons(excluded)
 
     # 3) 勤怠履歴超過の検出（詳細情報付き）
     for fac, df in service_raw.items():
@@ -1182,12 +1346,22 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
 
     # 4) 勤怠履歴超過の補正案
     busy_map = build_staff_busy_map(service_raw, att_keys=att_map.keys())  # 施設間重複フラグで除外…はせず、現状のまま
+    staff_timeline_map = build_staff_service_timeline(service_raw, att_keys=att_map.keys())
     for fac, df in service_raw.items():
         need_rows = df[df[CAT_COL].str.contains("勤怠履歴超過", na=False)]
         for idx, r in need_rows.iterrows():
             iv = Interval(r["_開始DT"], r["_終了DT"])
             staff = r["_担当所員_norm"]
-            alts = list_available_staff(iv, att_map, busy_map, exclude=staff, att_name_index=att_name_index)
+            target_loc_norm = r.get("_移動住所_norm", "")
+            alts, excluded = list_available_staff_with_reasons(
+                iv,
+                att_map,
+                busy_map,
+                exclude=staff,
+                att_name_index=att_name_index,
+                staff_timeline_map=staff_timeline_map,
+                target_loc_norm=target_loc_norm,
+            )
             # 既存代替リストがあれば統合（施設間重複と両方のケース）
             if alts:
                 new = alt_delim.join(alts)
@@ -1200,6 +1374,31 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
                 df.at[idx, ALT_COL] = "/".join(merged) if merged else "ー"
             else:
                 df.at[idx, ALT_COL] = new
+            df.at[idx, "代替除外理由"] = format_exclusion_reasons(excluded)
+
+    # 4.5) 移動時間不足のみ等、代替職員が未作成のエラー行に候補を補完
+    busy_map = build_staff_busy_map(service_raw, att_keys=att_map.keys())
+    staff_timeline_map = build_staff_service_timeline(service_raw, att_keys=att_map.keys())
+    for fac, df in service_raw.items():
+        need_rows = df[df[ERR_COL] == FLAG]
+        for idx, r in need_rows.iterrows():
+            prev_alt = str(df.at[idx, ALT_COL] or "").strip()
+            if prev_alt and prev_alt != "ー":
+                continue
+            iv = Interval(r["_開始DT"], r["_終了DT"])
+            staff = r["_担当所員_norm"]
+            target_loc_norm = r.get("_移動住所_norm", "")
+            alts, excluded = list_available_staff_with_reasons(
+                iv,
+                att_map,
+                busy_map,
+                exclude=staff,
+                att_name_index=att_name_index,
+                staff_timeline_map=staff_timeline_map,
+                target_loc_norm=target_loc_norm,
+            )
+            df.at[idx, ALT_COL] = alt_delim.join(alts) if alts else "ー"
+            df.at[idx, "代替除外理由"] = format_exclusion_reasons(excluded)
 
 
     if write_diagnostics:
@@ -1272,7 +1471,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         base_cols = [ERR_COL, CAT_COL, ALT_COL]
         detail_cols = ['重複時間（分）', '重複サービス時間', '超過時間（分）', '重複相手施設', '重複相手担当者',
                       '重複タイプ', 'カバー状況', '勤務区間数', '詳細ID', '勤務時間詳細',
-                      'カバー済み区間', '未カバー区間', '勤務時間外詳細', '移動時間不足詳細']
+                      'カバー済み区間', '未カバー区間', '勤務時間外詳細', '移動時間不足詳細', '代替除外理由']
         other_cols = [c for c in out_df.columns if c not in base_cols + detail_cols]
         cols = base_cols + detail_cols + other_cols
         out_df = out_df[cols]

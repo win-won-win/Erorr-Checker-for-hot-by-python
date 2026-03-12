@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional, Iterable
+from typing import List, Tuple, Dict, Optional, Iterable, Any
 import unicodedata
 import math
 
@@ -43,6 +43,10 @@ SERVICE_DATE_COL = "西暦日付"
 SERVICE_START_COL = "開始時間"
 SERVICE_END_COL = "終了時間"
 SERVICE_STAFF_COL = "担当所員"
+# NOTE: 「サービス提供責任者」列は住所が入る前提で参照する（移動時間チェック用）。
+SERVICE_LOCATION_COL = "サービス提供責任者"
+TRAVEL_GAP_MINUTES = 30
+TRAVEL_ERROR_CATEGORY = "移動時間不足"
 
 ATT_DATE_COL = "*年月日"
 ATT_NAME_COL = "名前"
@@ -175,6 +179,24 @@ def normalize_name(s: str) -> str:
     normalized = normalized.replace("早_", "早崎").replace("早＿", "早崎")
 
     return normalized
+
+def normalize_location(s: str) -> str:
+    """
+    住所（サービス提供責任者列に入れている値）の正規化。
+    空白・制御文字を整理して比較しやすくする。
+    """
+    if s is None or (isinstance(s, float) and pd.isna(s)):
+        return ""
+    text = str(s).strip()
+    if text == "" or text.lower() == "nan":
+        return ""
+    text = re.sub(r"[\x00-\x1F\x7F-\x9F]", "", text)
+    text = re.sub(r"[\u3000\s]+", " ", text).strip()
+    try:
+        text = unicodedata.normalize("NFKC", text)
+    except Exception:
+        pass
+    return text.strip()
 
 def _has_wildcard(name: str) -> bool:
     return "_" in name or "＿" in name
@@ -422,6 +444,14 @@ def build_service_records(path: Path, df: pd.DataFrame, facility_name: str, staf
     out["_終了DT"] = end_dt
     out["_担当所員"] = out[staff_col].astype(str).str.strip()
     out["_担当所員_norm"] = out["_担当所員"].map(normalize_name)
+
+    # NOTE: 「サービス提供責任者」列は住所が入る前提（移動時間チェックのための便宜的利用）
+    if SERVICE_LOCATION_COL in out.columns:
+        out["_移動住所_raw"] = out[SERVICE_LOCATION_COL]
+        out["_移動住所_norm"] = out["_移動住所_raw"].map(normalize_location)
+    else:
+        out["_移動住所_raw"] = ""
+        out["_移動住所_norm"] = ""
 
     return out
 
@@ -858,6 +888,64 @@ def update_coverage_details_in_csv(df: pd.DataFrame, idx: int, coverage_info: Co
     else:
         df.at[idx, '勤務時間外詳細'] = "勤務時間内"
 
+def add_error_category(df: pd.DataFrame, idx: int, category: str) -> None:
+    """エラーフラグとカテゴリを追記する（既存カテゴリは保持）。"""
+    if df.at[idx, ERR_COL] != FLAG:
+        df.at[idx, ERR_COL] = FLAG
+    existing = str(df.at[idx, CAT_COL] or "")
+    parts = [c.strip() for c in existing.split("，") if c.strip()]
+    if category not in parts:
+        parts.append(category)
+    df.at[idx, CAT_COL] = "，".join(sorted(parts))
+
+def find_travel_gap_violations(service_raw: Dict[str, pd.DataFrame]) -> List[Dict[str, Any]]:
+    """
+    住所不一致時の移動時間不足（30分未満）を検出する。
+    - 「サービス提供責任者」列の値を住所として扱う前提。
+    - 同一職員の連続サービスを時系列で比較する。
+    """
+    records = []
+    for fac, df in service_raw.items():
+        for idx, r in df.iterrows():
+            if pd.isna(r["_開始DT"]) or pd.isna(r["_終了DT"]):
+                continue
+            staff = r["_担当所員_norm"]
+            if not staff:
+                continue
+            loc_norm = r.get("_移動住所_norm", "")
+            loc_raw = r.get("_移動住所_raw", "")
+            records.append({
+                "facility": fac,
+                "idx": idx,
+                "staff": staff,
+                "start": r["_開始DT"],
+                "end": r["_終了DT"],
+                "loc_norm": loc_norm,
+                "loc_raw": loc_raw,
+            })
+
+    records.sort(key=lambda x: (x["staff"], x["start"], x["end"]))
+    violations: List[Dict[str, Any]] = []
+    prev_by_staff: Dict[str, Dict[str, Any]] = {}
+
+    for rec in records:
+        staff = rec["staff"]
+        prev = prev_by_staff.get(staff)
+        if prev:
+            prev_loc = prev.get("loc_norm", "")
+            curr_loc = rec.get("loc_norm", "")
+            if prev_loc and curr_loc and prev_loc != curr_loc:
+                gap_minutes = int((rec["start"] - prev["end"]).total_seconds() / 60)
+                if gap_minutes < TRAVEL_GAP_MINUTES:
+                    violations.append({
+                        "current": rec,
+                        "previous": prev,
+                        "gap_minutes": gap_minutes,
+                    })
+        prev_by_staff[staff] = rec
+
+    return violations
+
 def generate_detail_id(facility: str, row_index: int) -> str:
     """詳細情報参照用IDを生成"""
     import time
@@ -951,7 +1039,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         # 新規詳細カラムの初期化
         detail_columns = ['重複時間（分）', '超過時間（分）', '重複相手施設', '重複相手担当者',
                          '重複利用者名', '重複タイプ', '重複サービス時間', 'カバー状況', '勤務区間数', '詳細ID', '勤務時間詳細',
-                         'カバー済み区間', '未カバー区間', '勤務時間外詳細']
+                         'カバー済み区間', '未カバー区間', '勤務時間外詳細', '移動時間不足詳細']
         
         for col in detail_columns:
             if col not in df.columns:
@@ -1071,6 +1159,27 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
                     parts = [c for c in [cat, "勤怠履歴超過"] if c]
                     df.at[idx, CAT_COL] = "，".join(sorted(set(parts)))
 
+    # 3.5) 移動時間不足の検出（住所不一致の場合は30分以上の間隔が必要）
+    travel_violations = find_travel_gap_violations(service_raw)
+    for v in travel_violations:
+        current = v["current"]
+        previous = v["previous"]
+        df = service_raw[current["facility"]]
+        idx = current["idx"]
+        add_error_category(df, idx, TRAVEL_ERROR_CATEGORY)
+
+        if '移動時間不足詳細' in df.columns:
+            prev_loc = previous.get("loc_raw") or previous.get("loc_norm") or ""
+            curr_loc = current.get("loc_raw") or current.get("loc_norm") or ""
+            gap = v["gap_minutes"]
+            detail = (
+                f"前回:{previous['start'].strftime('%H:%M')}-{previous['end'].strftime('%H:%M')} {prev_loc} "
+                f"→ 今回:{current['start'].strftime('%H:%M')}-{current['end'].strftime('%H:%M')} {curr_loc} "
+                f"(差:{gap}分)"
+            ).strip()
+            existing = str(df.at[idx, '移動時間不足詳細'] or "")
+            df.at[idx, '移動時間不足詳細'] = f"{existing} | {detail}".strip(" |") if existing else detail
+
     # 4) 勤怠履歴超過の補正案
     busy_map = build_staff_busy_map(service_raw, att_keys=att_map.keys())  # 施設間重複フラグで除外…はせず、現状のまま
     for fac, df in service_raw.items():
@@ -1155,7 +1264,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         
         # 内部列は落としてから出力
         out_df = df.copy()
-        for c in ["_開始DT","_終了DT","_担当所員","施設"]:
+        for c in ["_開始DT","_終了DT","_担当所員","施設","_移動住所_raw","_移動住所_norm"]:
             if c in out_df.columns:
                 out_df.drop(columns=[c], inplace=True)
 
@@ -1163,7 +1272,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         base_cols = [ERR_COL, CAT_COL, ALT_COL]
         detail_cols = ['重複時間（分）', '重複サービス時間', '超過時間（分）', '重複相手施設', '重複相手担当者',
                       '重複タイプ', 'カバー状況', '勤務区間数', '詳細ID', '勤務時間詳細',
-                      'カバー済み区間', '未カバー区間', '勤務時間外詳細']
+                      'カバー済み区間', '未カバー区間', '勤務時間外詳細', '移動時間不足詳細']
         other_cols = [c for c in out_df.columns if c not in base_cols + detail_cols]
         cols = base_cols + detail_cols + other_cols
         out_df = out_df[cols]

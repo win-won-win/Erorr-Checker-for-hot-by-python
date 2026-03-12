@@ -900,6 +900,30 @@ def _safe_text(value: Any) -> str:
         return ""
     return text
 
+def _format_error_badges(category_text: str) -> str:
+    """
+    カード表示用のエラー種別バッジを作成する。
+    Material Icons記法を使ってアイコンと文字を並べる。
+    """
+    if not category_text:
+        return ""
+    parts = [p.strip() for p in str(category_text).split("，") if p.strip()]
+    if not parts:
+        return ""
+
+    icon_map = {
+        "移動時間不足": ("commute", "移動時間不足"),
+        "施設間重複": ("swap_horiz", "施設間重複"),
+        "事業所内重複": ("repeat", "同一従業員別サービス時間重複"),
+        "勤怠履歴超過": ("schedule", "勤怠履歴超過"),
+    }
+
+    badges = []
+    for part in parts:
+        icon_name, label = icon_map.get(part, ("error", part))
+        badges.append(f":material/{icon_name}: {label}")
+    return "  ·  ".join(badges)
+
 @lru_cache(maxsize=32)
 def _get_indicator_image(width: int, height: int, color: Tuple[int, int, int]) -> Optional[Any]:
     """指定色・サイズの縦ライン画像を生成（Pillow未導入ならNoneを返す）。"""
@@ -937,6 +961,7 @@ def show_card_view(df: pd.DataFrame) -> None:
         coverage = _safe_text(row.get("カバー状況"))
         error_mark = _safe_text(row.get("エラー"))
         category = _safe_text(row.get("カテゴリ"))
+        error_badges = _format_error_badges(category)
 
         detail_lines: List[str] = []
         if facility_name:
@@ -992,6 +1017,8 @@ def show_card_view(df: pd.DataFrame) -> None:
                     st.write("")
             with row_cols[1]:
                 st.markdown(f"**{date_text}　{start_time} 〜 {end_time}**")
+                if error_badges:
+                    st.markdown(error_badges)
                 st.caption(f"担当者: {staff_name}")
                 st.caption(f"代替従業員: {alt_staff}")
             with row_cols[2]:

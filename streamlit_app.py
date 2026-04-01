@@ -1072,7 +1072,7 @@ def show_card_view(df: pd.DataFrame) -> None:
 st.set_page_config(page_title="重複チェッカー for hot", layout="wide")
 
 # アプリ最終更新日時（READMEの更新ルールに従って手動更新）
-APP_LAST_UPDATED = "2026-03-12 13:00"
+APP_LAST_UPDATED = "2026-04-01 15:43"
 
 # カスタムCSS
 st.markdown("""

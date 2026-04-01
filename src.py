@@ -892,10 +892,18 @@ def calculate_uncovered_intervals(target: Interval, covers: List[Interval]) -> L
     uncovered = subtract_many(target, covers)
     return [f"{iv.start.strftime('%H:%M')}-{iv.end.strftime('%H:%M')}" for iv in uncovered]
 
+
+def ensure_numeric_column(df: pd.DataFrame, col: str) -> None:
+    """数値列が文字列型になっていても、代入前に数値列へ正規化する。"""
+    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int64")
+
 def update_overlap_details_in_csv(df: pd.DataFrame, idx: int, overlap_info: OverlapInfo, partner_facility: str):
     """CSVの重複詳細カラムを更新"""
-    current_overlap_time = df.at[idx, '重複時間（分）'] or 0
-    df.at[idx, '重複時間（分）'] = current_overlap_time + overlap_info.overlap_minutes
+    ensure_numeric_column(df, '重複時間（分）')
+    current_overlap_time = pd.to_numeric(df.at[idx, '重複時間（分）'], errors="coerce")
+    if pd.isna(current_overlap_time):
+        current_overlap_time = 0
+    df.at[idx, '重複時間（分）'] = int(current_overlap_time) + overlap_info.overlap_minutes
     
     current_facilities = str(df.at[idx, '重複相手施設'] or "")
     facilities = [f.strip() for f in current_facilities.split("，") if f.strip()]
@@ -969,6 +977,8 @@ def get_unique_work_intervals(work_ivs: List[Interval]) -> List[str]:
 
 def update_coverage_details_in_csv(df: pd.DataFrame, idx: int, coverage_info: CoverageInfo, staff_name: str = "", att_map: Dict = None):
     """CSVのカバー詳細カラムを更新"""
+    ensure_numeric_column(df, '超過時間（分）')
+    ensure_numeric_column(df, '勤務区間数')
     df.at[idx, '超過時間（分）'] = coverage_info.uncovered_minutes
     df.at[idx, 'カバー状況'] = coverage_info.coverage_status
     df.at[idx, '勤務区間数'] = coverage_info.work_interval_count
@@ -1193,12 +1203,18 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         detail_columns = ['重複時間（分）', '超過時間（分）', '重複相手施設', '重複相手担当者',
                          '重複利用者名', '重複タイプ', '重複サービス時間', 'カバー状況', '勤務区間数', '詳細ID', '勤務時間詳細',
                          'カバー済み区間', '未カバー区間', '勤務時間外詳細', '移動時間不足詳細', '代替除外理由']
-        
+        numeric_detail_defaults = {
+            '重複時間（分）': 0,
+            '超過時間（分）': 0,
+            '勤務区間数': 0,
+        }
+
         for col in detail_columns:
+            default_value = numeric_detail_defaults.get(col, "")
             if col not in df.columns:
-                df.insert(len([ERR_COL, CAT_COL, ALT_COL]), col, "")
+                df.insert(len([ERR_COL, CAT_COL, ALT_COL]), col, default_value)
             else:
-                df[col] = ""
+                df[col] = default_value
 
     facilities = sorted(service_raw.keys())  # 昇順比較ルールに整合
     flagged_indices: Dict[str, set] = {fac: set() for fac in facilities}

@@ -1902,6 +1902,8 @@ def show_optimal_attendance_export():
             st.warning(f"{target_month_str} の勤怠データが見つかりませんでした。別の月を選択してください。")
             if 'selected_employees_export' in st.session_state:
                 st.session_state.selected_employees_export = []
+            if 'selected_employees_export_widget' in st.session_state:
+                st.session_state.selected_employees_export_widget = []
             st.stop()
         
         available_employees = get_unique_employee_names(month_attendance_df)
@@ -1909,13 +1911,16 @@ def show_optimal_attendance_export():
             st.warning(f"{target_month_str} の勤怠データに従業員情報がありません。")
             if 'selected_employees_export' in st.session_state:
                 st.session_state.selected_employees_export = []
+            if 'selected_employees_export_widget' in st.session_state:
+                st.session_state.selected_employees_export_widget = []
             st.stop()
         
         st.caption(f"{target_month_str} の対象従業員: {len(available_employees)}名")
         
         # 従業員選択
         st.markdown("### 👥 出力対象従業員の選択")
-        
+
+        employee_options = sorted(available_employees)
         if 'selected_employees_export' not in st.session_state:
             st.session_state.selected_employees_export = []
         else:
@@ -1923,32 +1928,38 @@ def show_optimal_attendance_export():
                 emp for emp in st.session_state.selected_employees_export
                 if emp in available_employees
             ]
-        
+
+        widget_key = "selected_employees_export_widget"
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = list(st.session_state.selected_employees_export)
+        else:
+            st.session_state[widget_key] = [
+                emp for emp in st.session_state[widget_key]
+                if emp in available_employees
+            ]
+
         # 全選択・全解除ボタン
         col1, col2, col3 = st.columns([1, 1, 2])
         with col1:
             if st.button("全員選択", key="select_all_export"):
-                st.session_state.selected_employees_export = available_employees.copy()
+                st.session_state.selected_employees_export = employee_options.copy()
+                st.session_state[widget_key] = employee_options.copy()
                 st.rerun()
         with col2:
             if st.button("選択解除", key="clear_all_export"):
                 st.session_state.selected_employees_export = []
+                st.session_state[widget_key] = []
                 st.rerun()
-        
-        # 従業員チェックボックス
-        st.markdown("#### チェックボックスで従業員を選択してください")
-        
-        # 3列レイアウトでチェックボックスを表示
-        cols = st.columns(3)
-        for i, employee in enumerate(sorted(available_employees)):
-            with cols[i % 3]:
-                is_selected = employee in st.session_state.selected_employees_export
-                if st.checkbox(employee, value=is_selected, key=f"emp_check_{i}"):
-                    if employee not in st.session_state.selected_employees_export:
-                        st.session_state.selected_employees_export.append(employee)
-                else:
-                    if employee in st.session_state.selected_employees_export:
-                        st.session_state.selected_employees_export.remove(employee)
+
+        st.markdown("#### 従業員を選択してください")
+        selected_employees = st.multiselect(
+            "出力対象従業員",
+            employee_options,
+            default=st.session_state[widget_key],
+            key=widget_key,
+            placeholder="従業員名で絞り込みできます"
+        )
+        st.session_state.selected_employees_export = list(selected_employees)
         
         # 選択された従業員の表示
         if st.session_state.selected_employees_export:

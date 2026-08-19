@@ -773,6 +773,9 @@ def prepare_grid_data(result_paths):
                 display_staff = normalize_name(raw_staff.strip()) or raw_staff.strip()
             else:
                 display_staff = ''
+            staff_assignment_type = row.get('担当形態', '')
+            if staff_assignment_type and not pd.isna(staff_assignment_type):
+                display_staff = f"【連名】{display_staff}"
             
             raw_alt_staff = row.get('代替職員リスト', '')
             normalized_alt_staff = normalize_staff_list(raw_alt_staff)
@@ -787,6 +790,7 @@ def prepare_grid_data(result_paths):
                 'カテゴリ': row.get('カテゴリ', ''),
                 '代替従業員リスト': display_alt_staff,
                 '担当所員': display_staff,
+                '担当形態': staff_assignment_type,
                 '利用者名': row.get('利用者名', ''),
                 '重複利用者名': duplicate_user_name,
                 '重複エラー事業所名': duplicate_facility_display,
@@ -811,7 +815,7 @@ def prepare_grid_data(result_paths):
     
     desired_columns = [
         '代替従業員リスト', '重複エラー事業所名', '利用者名', '日付', '開始時間', '終了時間',
-        '担当所員', 'サービス詳細', '重複利用者名', '重複サービス時間', '重複時間', '懲戒時間',
+        '担当所員', '担当形態', 'サービス詳細', '重複利用者名', '重複サービス時間', '重複時間', '懲戒時間',
         'エラー職員勤務時間', '代替職員勤務時間', '勤務時間詳細', '勤務時間外詳細', '未カバー区間'
     ]
 
@@ -905,6 +909,8 @@ def create_styled_grid(df):
         gb.configure_column('元データ事業所名', hide=True)
     if '利用者名' in df.columns:
         gb.configure_column('利用者名', width=120)
+    if '担当形態' in df.columns:
+        gb.configure_column('担当形態', width=210)
     
     # 行スタイルを設定
     gb.configure_grid_options(getRowStyle=row_style_jscode)
@@ -971,6 +977,7 @@ def show_card_view(df: pd.DataFrame) -> None:
         end_time = _safe_text(row.get("終了時間")) or "ー"
         user_name = _safe_text(row.get("利用者名")) or "利用者不明"
         staff_name = _safe_text(row.get("担当所員")) or "担当未設定"
+        staff_assignment_type = _safe_text(row.get("担当形態"))
         facility_name = _safe_text(row.get("重複エラー事業所名")) or "事業所未設定"
         source_facility = _safe_text(row.get("元データ事業所名"))
         alt_staff = _safe_text(row.get("代替従業員リスト")) or "ー"
@@ -998,6 +1005,7 @@ def show_card_view(df: pd.DataFrame) -> None:
             ("エラー", error_mark),
             ("カテゴリ", category),
             ("カバー状況", coverage),
+            ("担当形態", staff_assignment_type),
             ("重複利用者", duplicate_user),
             ("重複サービス", duplicate_service),
             ("重複時間", duplicate_minutes),
@@ -1072,7 +1080,7 @@ def show_card_view(df: pd.DataFrame) -> None:
 st.set_page_config(page_title="重複チェッカー for hot", layout="wide")
 
 # アプリ最終更新日時（READMEの更新ルールに従って手動更新）
-APP_LAST_UPDATED = "2026-04-15 15:33"
+APP_LAST_UPDATED = "2026-08-19 11:23"
 
 # カスタムCSS
 st.markdown("""

@@ -180,6 +180,34 @@ def normalize_name(s: str) -> str:
 
     return normalized
 
+def split_staff_names(value: Any) -> List[str]:
+    """CSVの担当所員欄を、カンマ区切りの連名として分割する。"""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return []
+    text = str(value).strip()
+    if not text or text.lower() == "nan":
+        return []
+    names: List[str] = []
+    for part in re.split(r"[,，]+", text):
+        name = normalize_name(part)
+        if name and name not in names:
+            names.append(name)
+    return names
+
+def staff_names_for_row(row: pd.Series) -> List[str]:
+    """担当者を必ず氏名リストで返す（旧形式のDataFrameも互換）。"""
+    values = row.get("_担当所員_norm_list", None)
+    if isinstance(values, (list, tuple)):
+        return [str(v) for v in values if v]
+    return split_staff_names(row.get("_担当所員", row.get("_担当所員_norm", "")))
+
+def staff_groups_overlap(row1: pd.Series, row2: pd.Series) -> bool:
+    return any(
+        names_equivalent(name1, name2)
+        for name1 in staff_names_for_row(row1)
+        for name2 in staff_names_for_row(row2)
+    )
+
 def normalize_location(s: str) -> str:
     """
     住所（サービス提供責任者列に入れている値）の正規化。
@@ -443,7 +471,11 @@ def build_service_records(path: Path, df: pd.DataFrame, facility_name: str, staf
     out["_開始DT"] = start_dt
     out["_終了DT"] = end_dt
     out["_担当所員"] = out[staff_col].astype(str).str.strip()
-    out["_担当所員_norm"] = out["_担当所員"].map(normalize_name)
+    out["_担当所員_norm_list"] = out["_担当所員"].map(split_staff_names)
+    out["_担当所員_norm"] = out["_担当所員_norm_list"].map(lambda names: " / ".join(names))
+    out["担当形態"] = out["_担当所員_norm_list"].map(
+        lambda names: "連名（元データ: カンマ区切り）" if len(names) > 1 else ""
+    )
 
     # NOTE: 「サービス提供責任者」列は住所が入る前提（移動時間チェックのための便宜的利用）
     if SERVICE_LOCATION_COL in out.columns:
@@ -507,11 +539,11 @@ def build_staff_busy_map(service_dfs: Dict[str, pd.DataFrame], att_keys: Optiona
         for _, r in df.iterrows():
             if pd.isna(r["_開始DT"]) or pd.isna(r["_終了DT"]):
                 continue
-            staff = r["_担当所員_norm"]
-            if att_key_list:
-                resolved = resolve_name_key(staff, att_key_list)
-                staff = resolved if resolved is not None else staff
-            busy.setdefault(staff, []).append(Interval(r["_開始DT"], r["_終了DT"]))
+            for staff in staff_names_for_row(r):
+                if att_key_list:
+                    resolved = resolve_name_key(staff, att_key_list)
+                    staff = resolved if resolved is not None else staff
+                busy.setdefault(staff, []).append(Interval(r["_開始DT"], r["_終了DT"]))
     # マージ
     for staff, ivs in list(busy.items()):
         ivs.sort(key=lambda x: (x.start, x.end))
@@ -539,14 +571,14 @@ def build_staff_service_timeline(service_dfs: Dict[str, pd.DataFrame], att_keys:
         for _, r in df.iterrows():
             if pd.isna(r["_開始DT"]) or pd.isna(r["_終了DT"]):
                 continue
-            staff = r["_担当所員_norm"]
-            if att_key_list:
-                resolved = resolve_name_key(staff, att_key_list)
-                staff = resolved if resolved is not None else staff
-            timeline.setdefault(staff, []).append({
-                "interval": Interval(r["_開始DT"], r["_終了DT"]),
-                "loc_norm": r.get("_移動住所_norm", ""),
-            })
+            for staff in staff_names_for_row(r):
+                if att_key_list:
+                    resolved = resolve_name_key(staff, att_key_list)
+                    staff = resolved if resolved is not None else staff
+                timeline.setdefault(staff, []).append({
+                    "interval": Interval(r["_開始DT"], r["_終了DT"]),
+                    "loc_norm": r.get("_移動住所_norm", ""),
+                })
     for staff, items in list(timeline.items()):
         items.sort(key=lambda x: (x["interval"].start, x["interval"].end))
         timeline[staff] = items
@@ -592,7 +624,7 @@ def list_available_staff(
     target: Interval,
     att_map: Dict[str, List[Interval]],
     busy_map: Dict[str, List[Interval]],
-    exclude: str,
+    exclude: Any,
     att_name_index: Optional[Dict[str, List[str]]] = None,
     staff_timeline_map: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     target_loc_norm: str = "",
@@ -605,9 +637,14 @@ def list_available_staff(
     人の名前一覧（昇順）を返す。
     """
     candidates: List[str] = []
-    exclude_key = resolve_name_key(exclude, att_map.keys()) if exclude else exclude
+    exclude_names = list(exclude) if isinstance(exclude, (list, tuple, set)) else ([exclude] if exclude else [])
+    exclude_keys = {
+        resolve_name_key(name, att_map.keys()) or name
+        for name in exclude_names
+        if name
+    }
     for name, work_ivs in att_map.items():
-        if exclude_key and name == exclude_key:
+        if name in exclude_keys:
             continue
         if not interval_fully_covered(target, work_ivs):
             continue
@@ -639,7 +676,7 @@ def list_available_staff_with_reasons(
     target: Interval,
     att_map: Dict[str, List[Interval]],
     busy_map: Dict[str, List[Interval]],
-    exclude: str,
+    exclude: Any,
     att_name_index: Optional[Dict[str, List[str]]] = None,
     staff_timeline_map: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     target_loc_norm: str = "",
@@ -659,9 +696,14 @@ def list_available_staff_with_reasons(
     }
     candidates: List[str] = []
 
-    exclude_key = resolve_name_key(exclude, att_map.keys()) if exclude else exclude
+    exclude_names = list(exclude) if isinstance(exclude, (list, tuple, set)) else ([exclude] if exclude else [])
+    exclude_keys = {
+        resolve_name_key(name, att_map.keys()) or name
+        for name in exclude_names
+        if name
+    }
     for name, work_ivs in att_map.items():
-        if exclude_key and name == exclude_key:
+        if name in exclude_keys:
             continue
 
         reasons: List[str] = []
@@ -731,69 +773,53 @@ def find_overlaps_with_details(df1: pd.DataFrame, df2: pd.DataFrame,
     """
     overlaps: List[OverlapInfo] = []
     
-    # スタッフごとに分けて重複をチェック（ワイルドカード "_" を許容）
-    staff1_list = [s for s in df1["_担当所員_norm"].dropna().unique() if not pd.isna(s) and s != ""]
-    staff2_list = [s for s in df2["_担当所員_norm"].dropna().unique() if not pd.isna(s) and s != ""]
-    for staff1 in staff1_list:
-        matches = [s for s in staff2_list if names_equivalent(staff1, s)]
-        if not matches:
-            continue
+    # 連名を構成員ごとの索引に展開し、該当する行だけ比較する。
+    g1 = df1.dropna(subset=["_開始DT", "_終了DT"])
+    g2 = df2.dropna(subset=["_開始DT", "_終了DT"])
+    staff_index1: Dict[str, List[Any]] = {}
+    staff_index2: Dict[str, List[Any]] = {}
+    for idx, row in g1.iterrows():
+        for staff in staff_names_for_row(row):
+            staff_index1.setdefault(staff, []).append(idx)
+    for idx, row in g2.iterrows():
+        for staff in staff_names_for_row(row):
+            staff_index2.setdefault(staff, []).append(idx)
 
-        # 該当スタッフのレコードを抽出
-        g1 = df1[df1["_担当所員_norm"] == staff1].copy()
-        if g1.empty:
-            continue
+    candidate_pairs = set()
+    for staff1, indices1 in staff_index1.items():
+        for staff2, indices2 in staff_index2.items():
+            if names_equivalent(staff1, staff2):
+                candidate_pairs.update((idx1, idx2) for idx1 in indices1 for idx2 in indices2)
 
-        # 有効な時間データのみを対象
-        g1 = g1.dropna(subset=["_開始DT", "_終了DT"])
-        if g1.empty:
-            continue
+    for idx1, idx2 in candidate_pairs:
+        row1 = g1.loc[idx1]
+        row2 = g2.loc[idx2]
+        s1, e1 = row1["_開始DT"], row1["_終了DT"]
+        s2, e2 = row2["_開始DT"], row2["_終了DT"]
 
-        for staff2 in matches:
-            g2 = df2[df2["_担当所員_norm"] == staff2].copy()
-            if g2.empty:
-                continue
-            g2 = g2.dropna(subset=["_開始DT", "_終了DT"])
-            if g2.empty:
-                continue
-
-            # 全ペアをチェック
-            for idx1, row1 in g1.iterrows():
-                for idx2, row2 in g2.iterrows():
-                    s1, e1 = row1["_開始DT"], row1["_終了DT"]
-                    s2, e2 = row2["_開始DT"], row2["_終了DT"]
-
-                    # 時間の重複をチェック
-                    if s1 < e2 and s2 < e1:  # overlap condition
-                        overlap_start = max(s1, s2)
-                        overlap_end = min(e1, e2)
-                        overlap_minutes = int((overlap_end - overlap_start).total_seconds() / 60)
-
-                        # 重複タイプの判定
-                        if s1 == s2 and e1 == e2:
-                            overlap_type = "完全重複"
-                        else:
-                            overlap_type = "部分重複"
-
-                        overlap_info = OverlapInfo(
-                            idx1=idx1,
-                            idx2=idx2,
-                            facility1=facility1,
-                            facility2=facility2,
-                            staff1=row1["_担当所員"],
-                            staff2=row2["_担当所員"],
-                            user1=row1.get("利用者名", ""),
-                            user2=row2.get("利用者名", ""),
-                            start1=s1,
-                            end1=e1,
-                            start2=s2,
-                            end2=e2,
-                            overlap_start=overlap_start,
-                            overlap_end=overlap_end,
-                            overlap_minutes=overlap_minutes,
-                            overlap_type=overlap_type
-                        )
-                        overlaps.append(overlap_info)
+        if s1 < e2 and s2 < e1:
+            overlap_start = max(s1, s2)
+            overlap_end = min(e1, e2)
+            overlap_minutes = int((overlap_end - overlap_start).total_seconds() / 60)
+            overlap_type = "完全重複" if s1 == s2 and e1 == e2 else "部分重複"
+            overlaps.append(OverlapInfo(
+                idx1=idx1,
+                idx2=idx2,
+                facility1=facility1,
+                facility2=facility2,
+                staff1=row1["_担当所員"],
+                staff2=row2["_担当所員"],
+                user1=row1.get("利用者名", ""),
+                user2=row2.get("利用者名", ""),
+                start1=s1,
+                end1=e1,
+                start2=s2,
+                end2=e2,
+                overlap_start=overlap_start,
+                overlap_end=overlap_end,
+                overlap_minutes=overlap_minutes,
+                overlap_type=overlap_type
+            ))
     
     return overlaps
 
@@ -892,6 +918,43 @@ def calculate_uncovered_intervals(target: Interval, covers: List[Interval]) -> L
     uncovered = subtract_many(target, covers)
     return [f"{iv.start.strftime('%H:%M')}-{iv.end.strftime('%H:%M')}" for iv in uncovered]
 
+def analyze_staff_group_coverage(
+    target: Interval,
+    staff_names: List[str],
+    att_map: Dict[str, List[Interval]],
+) -> CoverageInfo:
+    """単名・連名の全担当者を個別に勤怠照合し、行単位の結果にまとめる。"""
+    results: List[Tuple[str, CoverageInfo]] = []
+    for staff in staff_names:
+        staff_key = resolve_name_key(staff, att_map.keys()) or staff
+        results.append((staff, analyze_coverage_details(target, att_map.get(staff_key, []), staff)))
+
+    if not results:
+        results.append(("担当者未設定", analyze_coverage_details(target, [], "")))
+
+    all_covered = all(info.is_fully_covered for _, info in results)
+    any_covered = any(info.covered_minutes > 0 for _, info in results)
+    status = "完全カバー" if all_covered else ("部分カバー" if any_covered else "カバー不足")
+
+    def labeled(values_name: str) -> List[str]:
+        values: List[str] = []
+        for staff, info in results:
+            for value in getattr(info, values_name):
+                values.append(f"{staff}: {value}" if len(results) > 1 else value)
+        return values
+
+    return CoverageInfo(
+        is_fully_covered=all_covered,
+        coverage_status=status,
+        total_service_minutes=results[0][1].total_service_minutes,
+        covered_minutes=min(info.covered_minutes for _, info in results),
+        uncovered_minutes=max(info.uncovered_minutes for _, info in results),
+        work_intervals=labeled("work_intervals"),
+        covered_intervals=labeled("covered_intervals"),
+        uncovered_intervals=labeled("uncovered_intervals"),
+        work_interval_count=sum(info.work_interval_count for _, info in results),
+    )
+
 
 def ensure_numeric_column(df: pd.DataFrame, col: str) -> None:
     """数値列が文字列型になっていても、代入前に数値列へ正規化する。"""
@@ -987,7 +1050,10 @@ def update_coverage_details_in_csv(df: pd.DataFrame, idx: int, coverage_info: Co
     if coverage_info.work_intervals:
         # 既存のwork_intervalsは文字列のリストなので、そのまま重複除去
         unique_intervals = list(dict.fromkeys(coverage_info.work_intervals))
-        df.at[idx, 'エラー職員勤務時間'] = f"{staff_name}: {' , '.join(unique_intervals)}"
+        if len(split_staff_names(staff_name)) > 1:
+            df.at[idx, 'エラー職員勤務時間'] = " | ".join(unique_intervals)
+        else:
+            df.at[idx, 'エラー職員勤務時間'] = f"{staff_name}: {' , '.join(unique_intervals)}"
     else:
         df.at[idx, 'エラー職員勤務時間'] = f"{staff_name}: 勤務時間なし"
     
@@ -1072,20 +1138,18 @@ def find_travel_gap_violations(service_raw: Dict[str, pd.DataFrame]) -> List[Dic
         for idx, r in df.iterrows():
             if pd.isna(r["_開始DT"]) or pd.isna(r["_終了DT"]):
                 continue
-            staff = r["_担当所員_norm"]
-            if not staff:
-                continue
             loc_norm = r.get("_移動住所_norm", "")
             loc_raw = r.get("_移動住所_raw", "")
-            records.append({
-                "facility": fac,
-                "idx": idx,
-                "staff": staff,
-                "start": r["_開始DT"],
-                "end": r["_終了DT"],
-                "loc_norm": loc_norm,
-                "loc_raw": loc_raw,
-            })
+            for staff in staff_names_for_row(r):
+                records.append({
+                    "facility": fac,
+                    "idx": idx,
+                    "staff": staff,
+                    "start": r["_開始DT"],
+                    "end": r["_終了DT"],
+                    "loc_norm": loc_norm,
+                    "loc_raw": loc_raw,
+                })
 
     records.sort(key=lambda x: (x["staff"], x["start"], x["end"]))
     violations: List[Dict[str, Any]] = []
@@ -1269,7 +1333,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
             r2 = df.loc[idx2]
             
             # 同一担当者の確認
-            if not names_equivalent(r1["_担当所員_norm"], r2["_担当所員_norm"]):
+            if not staff_groups_overlap(r1, r2):
                 continue
                 
             # どちらにフラグを立てるか決定
@@ -1298,7 +1362,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         need_rows = df[df[CAT_COL].str.contains("重複", na=False)]
         for idx, r in need_rows.iterrows():
             iv = Interval(r["_開始DT"], r["_終了DT"])
-            staff = r["_担当所員_norm"]
+            staff = staff_names_for_row(r)
             target_loc_norm = r.get("_移動住所_norm", "")
             alts, excluded = list_available_staff_with_reasons(
                 iv,
@@ -1318,16 +1382,12 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
             if pd.isna(r["_開始DT"]) or pd.isna(r["_終了DT"]):
                 continue
             
-            staff = r["_担当所員_norm"]
+            staff = staff_names_for_row(r)
             iv = Interval(r["_開始DT"], r["_終了DT"])
-            staff_key = resolve_name_key(staff, att_map.keys()) or staff
-            work_ivs = att_map.get(staff_key, [])
-            
-            # 詳細なカバー分析
-            coverage_info = analyze_coverage_details(iv, work_ivs, staff)
+            coverage_info = analyze_staff_group_coverage(iv, staff, att_map)
             
             # CSVカラムに詳細情報を設定
-            update_coverage_details_in_csv(df, idx, coverage_info, r.get("_担当所員", staff), att_map)
+            update_coverage_details_in_csv(df, idx, coverage_info, r.get("_担当所員", ""), att_map)
             
             if not coverage_info.is_fully_covered:
                 # 既にエラーが付いている場合はカテゴリを追記（カンマ連結）
@@ -1367,7 +1427,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         need_rows = df[df[CAT_COL].str.contains("勤怠履歴超過", na=False)]
         for idx, r in need_rows.iterrows():
             iv = Interval(r["_開始DT"], r["_終了DT"])
-            staff = r["_担当所員_norm"]
+            staff = staff_names_for_row(r)
             target_loc_norm = r.get("_移動住所_norm", "")
             alts, excluded = list_available_staff_with_reasons(
                 iv,
@@ -1402,7 +1462,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
             if prev_alt and prev_alt != "ー":
                 continue
             iv = Interval(r["_開始DT"], r["_終了DT"])
-            staff = r["_担当所員_norm"]
+            staff = staff_names_for_row(r)
             target_loc_norm = r.get("_移動住所_norm", "")
             alts, excluded = list_available_staff_with_reasons(
                 iv,
@@ -1479,7 +1539,7 @@ def process(input_dir: Path, prefer_identical: str = 'earlier', alt_delim: str =
         
         # 内部列は落としてから出力
         out_df = df.copy()
-        for c in ["_開始DT","_終了DT","_担当所員","施設","_移動住所_raw","_移動住所_norm"]:
+        for c in ["_開始DT","_終了DT","_担当所員","_担当所員_norm_list","施設","_移動住所_raw","_移動住所_norm"]:
             if c in out_df.columns:
                 out_df.drop(columns=[c], inplace=True)
 

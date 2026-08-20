@@ -772,10 +772,12 @@ def find_overlaps_with_details(df1: pd.DataFrame, df2: pd.DataFrame,
         OverlapInfoのリスト
     """
     overlaps: List[OverlapInfo] = []
-    
-    # 連名を構成員ごとの索引に展開し、該当する行だけ比較する。
+
+    # 連名を構成員ごとの索引に展開する。単名行は1名だけの索引になる。
     g1 = df1.dropna(subset=["_開始DT", "_終了DT"])
     g2 = df2.dropna(subset=["_開始DT", "_終了DT"])
+    g1 = g1[g1["_開始DT"] < g1["_終了DT"]]
+    g2 = g2[g2["_開始DT"] < g2["_終了DT"]]
     staff_index1: Dict[str, List[Any]] = {}
     staff_index2: Dict[str, List[Any]] = {}
     for idx, row in g1.iterrows():
@@ -785,42 +787,71 @@ def find_overlaps_with_details(df1: pd.DataFrame, df2: pd.DataFrame,
         for staff in staff_names_for_row(row):
             staff_index2.setdefault(staff, []).append(idx)
 
-    candidate_pairs = set()
+    # 全組み合わせを作らず、開始/終了イベントを時刻順に走査する。
+    # これにより、同一担当者の件数が多い月でも実際に時間が重なる行だけを処理する。
+    seen_pairs = set()
     for staff1, indices1 in staff_index1.items():
         for staff2, indices2 in staff_index2.items():
-            if names_equivalent(staff1, staff2):
-                candidate_pairs.update((idx1, idx2) for idx1 in indices1 for idx2 in indices2)
+            if not names_equivalent(staff1, staff2):
+                continue
 
-    for idx1, idx2 in candidate_pairs:
-        row1 = g1.loc[idx1]
-        row2 = g2.loc[idx2]
-        s1, e1 = row1["_開始DT"], row1["_終了DT"]
-        s2, e2 = row2["_開始DT"], row2["_終了DT"]
+            events = []
+            for idx in indices1:
+                row = g1.loc[idx]
+                events.append((row["_開始DT"], 1, 1, idx))  # 開始
+                events.append((row["_終了DT"], 0, 1, idx))  # 終了を同時刻の開始より先に処理
+            for idx in indices2:
+                row = g2.loc[idx]
+                events.append((row["_開始DT"], 1, 2, idx))
+                events.append((row["_終了DT"], 0, 2, idx))
 
-        if s1 < e2 and s2 < e1:
-            overlap_start = max(s1, s2)
-            overlap_end = min(e1, e2)
-            overlap_minutes = int((overlap_end - overlap_start).total_seconds() / 60)
-            overlap_type = "完全重複" if s1 == s2 and e1 == e2 else "部分重複"
-            overlaps.append(OverlapInfo(
-                idx1=idx1,
-                idx2=idx2,
-                facility1=facility1,
-                facility2=facility2,
-                staff1=row1["_担当所員"],
-                staff2=row2["_担当所員"],
-                user1=row1.get("利用者名", ""),
-                user2=row2.get("利用者名", ""),
-                start1=s1,
-                end1=e1,
-                start2=s2,
-                end2=e2,
-                overlap_start=overlap_start,
-                overlap_end=overlap_end,
-                overlap_minutes=overlap_minutes,
-                overlap_type=overlap_type
-            ))
-    
+            active1 = set()
+            active2 = set()
+            for _, event_type, side, idx in sorted(events, key=lambda e: (e[0], e[1], e[2])):
+                if event_type == 0:
+                    (active1 if side == 1 else active2).discard(idx)
+                    continue
+
+                if side == 1:
+                    pairs = ((idx, idx2) for idx2 in active2)
+                    active1.add(idx)
+                else:
+                    pairs = ((idx1, idx) for idx1 in active1)
+                    active2.add(idx)
+
+                for idx1, idx2 in pairs:
+                    pair = (idx1, idx2)
+                    if pair in seen_pairs:
+                        continue
+                    seen_pairs.add(pair)
+
+                    row1 = g1.loc[idx1]
+                    row2 = g2.loc[idx2]
+                    s1, e1 = row1["_開始DT"], row1["_終了DT"]
+                    s2, e2 = row2["_開始DT"], row2["_終了DT"]
+                    overlap_start = max(s1, s2)
+                    overlap_end = min(e1, e2)
+                    overlap_minutes = int((overlap_end - overlap_start).total_seconds() / 60)
+                    overlap_type = "完全重複" if s1 == s2 and e1 == e2 else "部分重複"
+                    overlaps.append(OverlapInfo(
+                        idx1=idx1,
+                        idx2=idx2,
+                        facility1=facility1,
+                        facility2=facility2,
+                        staff1=row1["_担当所員"],
+                        staff2=row2["_担当所員"],
+                        user1=row1.get("利用者名", ""),
+                        user2=row2.get("利用者名", ""),
+                        start1=s1,
+                        end1=e1,
+                        start2=s2,
+                        end2=e2,
+                        overlap_start=overlap_start,
+                        overlap_end=overlap_end,
+                        overlap_minutes=overlap_minutes,
+                        overlap_type=overlap_type
+                    ))
+
     return overlaps
 
 def analyze_coverage_details(target: Interval, covers: List[Interval],

@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+import time
 
 import pandas as pd
 
@@ -70,3 +71,47 @@ def test_joint_staff_member_is_used_for_service_overlap_detection():
 
     overlaps = find_overlaps_with_details(group, single, "A", "B")
     assert len(overlaps) == 1
+
+
+def test_single_staff_overlap_results_remain_correct():
+    first = build_service_records(
+        Path("first.csv"),
+        pd.DataFrame([
+            {"西暦日付": "2026/08/20", "開始時間": "09:00", "終了時間": "10:00", "担当所員": "山本 裕貴"},
+            {"西暦日付": "2026/08/20", "開始時間": "10:00", "終了時間": "11:00", "担当所員": "山本 裕貴"},
+        ]),
+        "A",
+    )
+    second = build_service_records(
+        Path("second.csv"),
+        pd.DataFrame([
+            {"西暦日付": "2026/08/20", "開始時間": "09:30", "終了時間": "10:00", "担当所員": "山本裕貴"},
+            {"西暦日付": "2026/08/20", "開始時間": "11:00", "終了時間": "12:00", "担当所員": "山本裕貴"},
+        ]),
+        "B",
+    )
+
+    overlaps = find_overlaps_with_details(first, second, "A", "B")
+    assert [(item.idx1, item.idx2, item.overlap_minutes) for item in overlaps] == [(0, 0, 30)]
+
+
+def test_single_staff_large_non_overlapping_data_finishes_quickly():
+    rows = []
+    for i in range(500):
+        minute = i * 2
+        hour, minute_of_hour = divmod(minute, 60)
+        end_hour, end_minute = divmod(minute + 1, 60)
+        rows.append({
+            "西暦日付": "2026/08/20",
+            "開始時間": f"{hour:02}:{minute_of_hour:02}",
+            "終了時間": f"{end_hour:02}:{end_minute:02}",
+            "担当所員": "山本 裕貴",
+        })
+    records = build_service_records(Path("large.csv"), pd.DataFrame(rows), "A")
+
+    started = time.perf_counter()
+    overlaps = find_overlaps_with_details(records, records, "A", "A")
+    elapsed = time.perf_counter() - started
+
+    assert len(overlaps) == 500  # 各行の自己比較のみ（呼び出し側で除外される）
+    assert elapsed < 5.0

@@ -1080,7 +1080,7 @@ def show_card_view(df: pd.DataFrame) -> None:
 st.set_page_config(page_title="重複チェッカー for hot", layout="wide")
 
 # アプリ最終更新日時（READMEの更新ルールに従って手動更新）
-APP_LAST_UPDATED = "2026-08-19 11:23"
+APP_LAST_UPDATED = "2026-08-20 09:01"
 
 # カスタムCSS
 st.markdown("""
@@ -1504,8 +1504,12 @@ with tab1:
             if att_name_col and att_name_col != "名前":
                 cmd += ["--att-name-col", att_name_col]
 
-            # 実行
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            # 実行（予期せぬ大量データでも無期限に「処理中」にしない）
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            except subprocess.TimeoutExpired:
+                st.error("処理が5分を超えたため中断しました。CSVの件数や、同一担当者のサービス件数をご確認ください。")
+                st.stop()
             if proc.returncode != 0:
                 st.error("処理エラーが発生しました")
                 with st.expander("エラー詳細", expanded=True):
